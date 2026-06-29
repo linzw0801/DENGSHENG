@@ -2,8 +2,6 @@ name: ETF Daily Rotation
 
 on:
   schedule:
-    # 北京时间 16:00 (UTC 08:00) 每个交易日收盘后跑
-    # GitHub Actions cron 有时延迟 5-15 分钟, 设 15:50 双保险
     - cron: '50 7 * * 1-5'
     - cron: '0 8 * * 1-5'
   workflow_dispatch:
@@ -19,7 +17,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Run ETF Rotator
         env:
