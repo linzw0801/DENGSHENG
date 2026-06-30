@@ -1,29 +1,25 @@
-name: ETF Daily Rotation
+name: ETF轮动每日选股
 
 on:
-  schedule:
-    - cron: '33 8 * * 1-5'   # 北京时间 16:33 (UTC 08:33, 避开整点高峰)
   workflow_dispatch:
 
 jobs:
-  run:
+  etf-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
-
-      - name: Run ETF Rotator
+          python-version: '3.13'
+      - name: 运行选股并推送到飞书
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
         run: python etf_rotation_cloud.py --feishu
-
-      - name: Upload log on failure
-        if: failure()
+      - name: 输出到 Summary
+        if: always()
         run: |
-          echo "::error::ETF rotation failed, check workflow log"
-          exit 1
+          echo '### ETF轮动选股报告' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          python etf_rotation_cloud.py >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
