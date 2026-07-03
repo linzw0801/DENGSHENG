@@ -353,7 +353,7 @@ def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("  ETF轮动选股器 (B+C+ 并集方案 v3)")
+    print("  ETF轮动选股器")
     print("  " + datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M"))
     print("=" * 60)
 
