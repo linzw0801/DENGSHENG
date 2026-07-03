@@ -14,7 +14,7 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
 2. 选取得分最高的 ETF 作为持有候选
 
 3. 风控触发条件 (满足任一即清仓切逆回购 GC001/R-001):
-   ① 4 标的等权平均 vol20 > 35%        (原方案C, 市场整体风险)
+   ① 4 标的等权平均 vol20 > 40%        (原方案C, 市场整体风险)
    ② 持有标的趋势线 > 95 且 持有标的 vol20 > 30%  (方案B, 个股阶段顶部)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%  (方案C+, 多标的共振)
 
@@ -29,6 +29,9 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
 【波动率】
    20 日收益率样本标准差 (ddof=1), 年化 × √250
    与 pandas rolling(20).std() 默认一致
+
+【版本历史】
+   2026-07-03: 条件① 阈值 0.35 → 0.40 (回测 +1.5pp 年化, +13.8% 终值)
 """
 import json, math, sys, urllib.request, os, argparse
 from datetime import datetime, timezone, timedelta
@@ -48,7 +51,7 @@ TIMEOUT = 15
 CN_TZ = timezone(timedelta(hours=8))
 
 # 风控阈值
-AVG_VOL_THRESHOLD = 0.35     # 条件①: 等权平均 vol20 阈值
+AVG_VOL_THRESHOLD = 0.40     # 条件①: 等权平均 vol20 阈值 (2026-07-03 从 0.35 放宽, 回测 +1.5pp 年化)
 TREND_THRESHOLD = 95.0       # 条件②: 持有趋势线阈值
 HOLD_VOL_THRESHOLD_B = 0.30  # 条件②: 持有 vol20 阈值
 HOLD_VOL_THRESHOLD_C = 0.40  # 条件③: 持有 vol20 阈值
@@ -89,7 +92,8 @@ def fetch_klines(code, market, days=FETCH_DAYS):
                     if not raw or raw.strip() == "null": continue
                     data = json.loads(raw)
                     if not isinstance(data, list) or len(data) < N: continue
-                    valid = [{"day": d.get("date",""), "close": float(d.get("close",0)),
+                    valid = [{"day": d.get("day") or d.get("date", ""),
+                              "close": float(d.get("close",0)),
                               "open": float(d.get("open",0)), "high": float(d.get("high",0)),
                               "low": float(d.get("low",0)), "volume": float(d.get("volume",0))}
                              for d in data if float(d.get("volume",0)) > 0]
@@ -196,7 +200,7 @@ def check_risk(avg_vol, hold_vol, hold_trend):
     返回: (是否触发, 触发条件列表)
     """
     triggered = []
-    # 条件①: 等权平均 vol > 35%
+    # 条件①: 等权平均 vol > 40%
     if avg_vol > AVG_VOL_THRESHOLD:
         triggered.append(f"① 4标的等权平均 vol20 = {avg_vol*100:.1f}% > {AVG_VOL_THRESHOLD*100:.0f}% (市场整体高波动)")
     # 条件②: 持有趋势线 > 95 且 持有 vol > 30%
