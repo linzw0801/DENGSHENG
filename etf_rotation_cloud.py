@@ -297,7 +297,7 @@ def format_action(data):
 
     # 4 标的排名
     lines.append("📋 动量得分排名:")
-    medals = ["🥇", "🥈", "🥉", "     "]
+    medals = ["🥇", "🥈", "🥉", "      "]
     for i, r in enumerate(data["results"]):
         icon = medals[i] if i < 4 else "  "
         star = " ⬅ 推荐" if (not triggered and i == 0) else ""
