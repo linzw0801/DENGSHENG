@@ -321,7 +321,6 @@ def format_action(data):
     if triggered:
         lines.append("   14:50 前买 GC001 / R-001 隔夜逆回购")
     lines.append("")
-    lines.append("━" * 50)
     return "\n".join(lines)
 
 
@@ -352,10 +351,9 @@ def main():
         print("[错误] 请设置 FEISHU_WEBHOOK_URL 环境变量")
         sys.exit(1)
 
-    print("=" * 60)
     print("  ETF轮动选股器")
     print("  " + datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M"))
-    print("=" * 60)
+    print("=" * 10)
 
     data = run()
     if data is None:
