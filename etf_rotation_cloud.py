@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
+ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v3)
 =========================================
 数据源: 东方财富 + 新浪 (双备份 + 重试)
 每日定时推送下一交易日的操作建议到飞书
@@ -15,7 +15,7 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
 
 3. 风控触发条件 (满足任一即清仓切逆回购 GC001/R-001):
    ① 4 标的等权平均 vol20 > 40%        (原方案C, 市场整体风险)
-   ② 持有标的趋势线 > 95 且 持有标的 vol20 > 30%  (方案B, 个股阶段顶部)
+   ② 持有标的趋势线 > 95 且 持有标的 vol20 > 24%  (方案B, 个股阶段顶部)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%  (方案C+, 多标的共振)
 
 【趋势线计算 (DDBB 量化趋势线)】
@@ -31,7 +31,8 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
    与 pandas rolling(20).std() 默认一致
 
 【版本历史】
-   2026-07-03: 条件① 阈值 0.35 → 0.40 (回测 +1.5pp 年化, +13.8% 终值)
+   2026-07-03 v3: 条件② 持有 vol 阈值 0.30 → 0.24 (回测 +4.1pp 年化, Calmar 1.82 → 2.09)
+   2026-07-03 v2: 条件① 阈值 0.35 → 0.40 (回测 +1.5pp 年化, +13.8% 终值)
 """
 import json, math, sys, urllib.request, os, argparse
 from datetime import datetime, timezone, timedelta
@@ -53,7 +54,7 @@ CN_TZ = timezone(timedelta(hours=8))
 # 风控阈值
 AVG_VOL_THRESHOLD = 0.40     # 条件①: 等权平均 vol20 阈值 (2026-07-03 从 0.35 放宽, 回测 +1.5pp 年化)
 TREND_THRESHOLD = 95.0       # 条件②: 持有趋势线阈值
-HOLD_VOL_THRESHOLD_B = 0.30  # 条件②: 持有 vol20 阈值
+HOLD_VOL_THRESHOLD_B = 0.24  # 条件②: 持有 vol20 阈值 (2026-07-03 从 0.30 放宽, 回测 +4.1pp 年化, Calmar 2.09)
 HOLD_VOL_THRESHOLD_C = 0.40  # 条件③: 持有 vol20 阈值
 AVG_VOL_THRESHOLD_C = 0.30   # 条件③: 等权平均 vol20 阈值
 
@@ -193,7 +194,7 @@ def calc_trend_line(highs, lows, closes):
 
 
 # ============================================================
-# 风控判断 (B+C+ 并集)
+# 风控判断 (B+C+ 并集 v3)
 # ============================================================
 def check_risk(avg_vol, hold_vol, hold_trend):
     """
@@ -203,7 +204,7 @@ def check_risk(avg_vol, hold_vol, hold_trend):
     # 条件①: 等权平均 vol > 40%
     if avg_vol > AVG_VOL_THRESHOLD:
         triggered.append(f"① 4标的等权平均 vol20 = {avg_vol*100:.1f}% > {AVG_VOL_THRESHOLD*100:.0f}% (市场整体高波动)")
-    # 条件②: 持有趋势线 > 95 且 持有 vol > 30%
+    # 条件②: 持有趋势线 > 95 且 持有 vol > 24%
     if hold_trend > TREND_THRESHOLD and hold_vol > HOLD_VOL_THRESHOLD_B:
         triggered.append(f"② 持有标的趋势线 = {hold_trend:.1f} > {TREND_THRESHOLD} 且 持有 vol20 = {hold_vol*100:.1f}% > {HOLD_VOL_THRESHOLD_B*100:.0f}% (个股阶段顶部)")
     # 条件③: 持有 vol > 40% 且 等权平均 vol > 30%
@@ -342,7 +343,7 @@ def send_feishu(webhook_url, text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ETF轮动选股器 (B+C+ 并集方案)")
+    parser = argparse.ArgumentParser(description="ETF轮动选股器 (B+C+ 并集方案 v3)")
     parser.add_argument("--feishu", action="store_true", help="发送结果到飞书 Webhook")
     args = parser.parse_args()
 
@@ -352,7 +353,7 @@ def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("  ETF轮动选股器 (B+C+ 并集方案)")
+    print("  ETF轮动选股器 (B+C+ 并集方案 v3)")
     print("  " + datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M"))
     print("=" * 60)
 
