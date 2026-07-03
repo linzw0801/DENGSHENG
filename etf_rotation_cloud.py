@@ -38,8 +38,8 @@ import json, math, sys, urllib.request, os, argparse
 from datetime import datetime, timezone, timedelta
 
 ETF_LIST = [
-    {"code": "510300", "name": "沪深300 ETF", "market": "sh"},
-    {"code": "159915", "name": "创业板 ETF",  "market": "sz"},
+    {"code": "510300", "name": "沪深 ETF", "market": "sh"},
+    {"code": "159915", "name": "创业 ETF",  "market": "sz"},
     {"code": "513100", "name": "纳指 ETF",    "market": "sh"},
     {"code": "518880", "name": "黄金 ETF",    "market": "sh"},
 ]
@@ -299,7 +299,7 @@ def format_action(data):
 
     # 4 标的排名
     lines.append("📋 动量得分排名:")
-    medals = ["🥇", "🥈", "🥉", "  "]
+    medals = ["🥇", "🥈", "🥉", "     "]
     for i, r in enumerate(data["results"]):
         icon = medals[i] if i < 4 else "  "
         star = " ⬅ 推荐" if (not triggered and i == 0) else ""
