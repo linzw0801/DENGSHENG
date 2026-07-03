@@ -8,23 +8,14 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
 
 【策略规则】
 1. 动量得分 = (exp(slope × 250) - 1) × R²
-   - 对每个 ETF 用过去 25 个交易日的对数收盘价做线性回归
-   - slope 为年化斜率, R² 为拟合优度
-
 2. 选取得分最高的 ETF 作为持有候选
-
 3. 风控触发条件 (满足任一即清仓切逆回购 GC001/R-001):
-   ① 4 标的等权平均 vol20 > 35%        (原方案C, 市场整体风险)
-   ② 持有标的趋势线 > 95 且 持有标的 vol20 > 30%  (方案B, 个股阶段顶部)
-   ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%  (方案C+, 多标的共振)
+   ① 4 标的等权平均 vol20 > 35%
+   ② 持有标的趋势线 > 95 且 持有标的 vol20 > 30%
+   ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
 
-【趋势线计算 (DDBB 量化趋势线)】
-   LLV(low, 55), HHV(high, 55)
-   RSV = (close - LLV) / (HHV - LLV) × 100
-   SMA5  = TDX_SMA(RSV, 5, 1)
-   SMA5_3 = TDX_SMA(SMA5, 3, 1)
-   V11 = 3 × SMA5 - 2 × SMA5_3
-   趋势线 = EMA(V11, 3)
+【波动率计算】20 日收益率样本标准差 × √250 (ddof=1, 与 pandas.std 默认一致)
+【趋势线计算】RSV55 → SMA5 → SMA3 → 3SMA5-2SMA3 → EMA3
 """
 import json, math, sys, urllib.request, os, argparse
 from datetime import datetime, timezone, timedelta
@@ -36,29 +27,23 @@ ETF_LIST = [
     {"code": "518880", "name": "黄金 ETF",    "market": "sh"},
 ]
 
-N = 25                       # 动量回归窗口
-VOL_WINDOW = 20              # 波动率窗口
-TRADING_DAYS = 250           # 一年交易日
-FETCH_DAYS = 300             # 拉取的历史数据天数 (要够算 vol20 和趋势线)
+N = 25
+VOL_WINDOW = 20
+TRADING_DAYS = 250
+FETCH_DAYS = 300
 TIMEOUT = 15
 CN_TZ = timezone(timedelta(hours=8))
 
-# 风控阈值
-AVG_VOL_THRESHOLD = 0.35     # 条件①: 等权平均 vol20 阈值
-TREND_THRESHOLD = 95.0       # 条件②: 持有趋势线阈值
-HOLD_VOL_THRESHOLD_B = 0.30  # 条件②: 持有 vol20 阈值
-HOLD_VOL_THRESHOLD_C = 0.40  # 条件③: 持有 vol20 阈值
-AVG_VOL_THRESHOLD_C = 0.30   # 条件③: 等权平均 vol20 阈值
+AVG_VOL_THRESHOLD = 0.35
+TREND_THRESHOLD = 95.0
+HOLD_VOL_THRESHOLD_B = 0.30
+HOLD_VOL_THRESHOLD_C = 0.40
+AVG_VOL_THRESHOLD_C = 0.30
 
 
-# ============================================================
-# 数据获取 (东财 + 新浪 双数据源, 重试 3 轮)
-# ============================================================
 def fetch_klines(code, market, days=FETCH_DAYS):
     urls = [
-        # 东财: klt=101 日线, fqt=1 前复权
         f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={'1.' if market=='sh' else '0.'}{code}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&end=20500101&lmt={days}",
-        # 新浪备选
         f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={'sh' if market=='sh' else 'sz'}{code}&datalen={days}&scale=240&ma=no",
     ]
     import time as _time
@@ -100,11 +85,7 @@ def fetch_klines(code, market, days=FETCH_DAYS):
     return None
 
 
-# ============================================================
-# 指标计算
-# ============================================================
 def calc_score(closes):
-    """动量得分: (exp(slope × 250) - 1) × R²"""
     c = closes[-N:]
     if len(c) < N or min(c) <= 0: return 0
     y = [math.log(x) for x in c]
@@ -125,25 +106,25 @@ def calc_score(closes):
 
 
 def calc_vol20(closes):
-    """20 日年化波动率"""
+    """20 日年化波动率 (样本标准差 ddof=1, 与 pandas.std 默认一致)"""
     if len(closes) < VOL_WINDOW + 1: return 0
     recent = closes[-(VOL_WINDOW+1):]
     rets = [(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent)) if recent[i-1] > 0]
     if len(rets) < VOL_WINDOW: return 0
     m = sum(rets) / len(rets)
-    var = sum((r-m)**2 for r in rets) / len(rets)
+    # ddof=1: 除以 (n-1), 与 pandas rolling.std 默认行为一致
+    var = sum((r-m)**2 for r in rets) / (len(rets) - 1)
     return math.sqrt(var) * math.sqrt(TRADING_DAYS)
 
 
 def tdx_sma(values, n, m):
-    """通达信 SMA: Y = (X*M + Y*(N-M))/N, Y 初始化为第一个有效值"""
     out = [float('nan')] * len(values)
     y = float('nan')
     for i, x in enumerate(values):
-        if x != x:  # NaN
+        if x != x:
             out[i] = y
             continue
-        if y != y:  # 第一个有效值
+        if y != y:
             y = x
         else:
             y = (x*m + y*(n-m)) / n
@@ -152,11 +133,6 @@ def tdx_sma(values, n, m):
 
 
 def calc_trend_line(highs, lows, closes):
-    """DDBB 量化趋势线 (0-100)
-    RSV = (close-LLV55)/(HHV55-LLV55) × 100
-    V11 = 3 × SMA(SMA(RSV,5,1),3,1) 的变换
-    趋势线 = EMA(V11, 3)
-    """
     n = len(closes)
     if n < 55: return 50.0
     rsv = []
@@ -174,7 +150,6 @@ def calc_trend_line(highs, lows, closes):
     sma5_3 = tdx_sma(sma5, 3, 1)
     v11 = [3*sma5[i] - 2*sma5_3[i] if (sma5[i]==sma5[i] and sma5_3[i]==sma5_3[i]) else 50.0
            for i in range(n)]
-    # EMA(V11, 3)
     ema = [float('nan')] * n
     ema[0] = v11[0]
     alpha = 2 / (3 + 1)
@@ -183,30 +158,17 @@ def calc_trend_line(highs, lows, closes):
     return ema[-1]
 
 
-# ============================================================
-# 风控判断 (B+C+ 并集)
-# ============================================================
 def check_risk(avg_vol, hold_vol, hold_trend):
-    """
-    返回: (是否触发, 触发条件列表)
-    """
     triggered = []
-    # 条件①: 等权平均 vol > 35%
     if avg_vol > AVG_VOL_THRESHOLD:
         triggered.append(f"① 4标的等权平均 vol20 = {avg_vol*100:.1f}% > {AVG_VOL_THRESHOLD*100:.0f}% (市场整体高波动)")
-    # 条件②: 持有趋势线 > 95 且 持有 vol > 30%
     if hold_trend > TREND_THRESHOLD and hold_vol > HOLD_VOL_THRESHOLD_B:
         triggered.append(f"② 持有标的趋势线 = {hold_trend:.1f} > {TREND_THRESHOLD} 且 持有 vol20 = {hold_vol*100:.1f}% > {HOLD_VOL_THRESHOLD_B*100:.0f}% (个股阶段顶部)")
-    # 条件③: 持有 vol > 40% 且 等权平均 vol > 30%
     if hold_vol > HOLD_VOL_THRESHOLD_C and avg_vol > AVG_VOL_THRESHOLD_C:
         triggered.append(f"③ 持有 vol20 = {hold_vol*100:.1f}% > {HOLD_VOL_THRESHOLD_C*100:.0f}% 且 等权平均 vol20 = {avg_vol*100:.1f}% > {AVG_VOL_THRESHOLD_C*100:.0f}% (多标的共振)")
-
     return len(triggered) > 0, triggered
 
 
-# ============================================================
-# 主流程
-# ============================================================
 def run():
     all_data = {}
     results = []
@@ -238,14 +200,9 @@ def run():
     if not valid_results:
         return None
 
-    # 排序: 得分最高的为推荐持有
     valid_results.sort(key=lambda r: r["score"], reverse=True)
     best = valid_results[0]
-
-    # 计算等权平均 vol
     avg_vol = sum(r["vol"] for r in valid_results) / len(valid_results)
-
-    # 风控检查
     triggered, reasons = check_risk(avg_vol, best["vol"], best["trend"])
 
     return {
@@ -259,7 +216,6 @@ def run():
 
 
 def format_action(data, run_time=None):
-    """格式化输出: 下一个交易日的操作建议"""
     if run_time is None:
         run_time = datetime.now(CN_TZ)
     best = data["best"]
@@ -276,14 +232,12 @@ def format_action(data, run_time=None):
     lines.append(f"🕒 运行时间: {run_time.strftime('%Y-%m-%d %H:%M:%S')} (数据截至 {newest_date})")
     lines.append("")
 
-    # 操作建议
     if triggered:
         lines.append("🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001")
     else:
         lines.append(f"🟢 操作: 满仓持有 {best['name']} ({best['code']})")
     lines.append("")
 
-    # 触发原因 / 安全状态
     if triggered:
         lines.append("⚠️ 风控触发原因:")
         for r in reasons:
@@ -292,7 +246,6 @@ def format_action(data, run_time=None):
         lines.append("✅ 风控未触发, 各项指标正常")
     lines.append("")
 
-    # 4 标的排名
     lines.append("📋 动量得分排名:")
     medals = ["🥇", "🥈", "🥉", "  "]
     for i, r in enumerate(data["results"]):
@@ -304,13 +257,11 @@ def format_action(data, run_time=None):
                      f"趋势 {r['trend']:5.1f}{star}")
     lines.append("")
 
-    # 状态汇总
     lines.append("📈 当前市场状态:")
     lines.append(f"   等权平均 vol20: {avg_vol*100:.1f}%  (阈值 {AVG_VOL_THRESHOLD*100:.0f}%)")
     lines.append(f"   推荐: {best['name']} vol20 = {best['vol']*100:.1f}%  趋势线 = {best['trend']:.1f}")
     lines.append("")
 
-    # 时间提示
     lines.append("⏰ 执行时间:")
     lines.append("   明日 09:30 开盘执行")
     if triggered:
