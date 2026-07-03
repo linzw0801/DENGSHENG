@@ -276,9 +276,7 @@ def format_action(data):
     avg_vol = data["avg_vol"]
 
     lines = []
-    lines.append("━" * 50)
     lines.append("📊 ETF轮动 次日操作建议")
-    lines.append("━" * 50)
     lines.append("")
 
     # 操作建议
@@ -304,9 +302,9 @@ def format_action(data):
         icon = medals[i] if i < 4 else "  "
         star = " ⬅ 推荐" if (not triggered and i == 0) else ""
         lines.append(f"   {icon} {r['name']:<8} "
-                     f"得分 {r['score']:+.3f}  "
-                     f"vol {r['vol']*100:5.1f}%  "
-                     f"趋势 {r['trend']:5.1f}{star}")
+                     f"{r['score']:+.3f}  "
+                     f"{r['vol']*100:5.1f}%  "
+                     f"{r['trend']:5.1f}{star}")
     lines.append("")
 
     # 状态汇总
