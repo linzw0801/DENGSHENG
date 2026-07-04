@@ -55,7 +55,7 @@ CN_TZ = timezone(timedelta(hours=8))
 AVG_VOL_THRESHOLD = 0.40     # 条件①: 等权平均 vol20 阈值 (2026-07-03 从 0.35 放宽, 回测 +1.5pp 年化)
 TREND_THRESHOLD = 95.0       # 条件②: 持有趋势线阈值
 HOLD_VOL_THRESHOLD_B = 0.24  # 条件②: 持有 vol20 阈值 (2026-07-03 从 0.30 放宽, 回测 +4.1pp 年化, Calmar 2.09)
-HOLD_VOL_THRESHOLD_C = 0.40  # 条件③: 持有 vol20 阈值
+HOLD_VOL_THRESHOLD_C = 0.36  # 条件③: 持有 vol20 阈值
 AVG_VOL_THRESHOLD_C = 0.30   # 条件③: 等权平均 vol20 阈值
 
 
