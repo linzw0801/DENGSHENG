@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v3)
+ETF 轮动选股器 — 云端版 (B+C+ 并集方案)
 =========================================
 数据源: 东方财富 + 新浪 (双备份 + 重试)
 每日定时推送下一交易日的操作建议到飞书
@@ -16,7 +16,7 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v3)
 3. 风控触发条件 (满足任一即清仓切逆回购 GC001/R-001):
    ① 4 标的等权平均 vol20 > 40%        (原方案C, 市场整体风险)
    ② 持有标的趋势线 > 95 且 持有标的 vol20 > 24%  (方案B, 个股阶段顶部)
-   ③ 持有标的 vol20 > 36% 且 等权平均 vol20 > 30%  (方案C+, 多标的共振)
+   ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%  (方案C+, 多标的共振)
 
 【趋势线计算 (DDBB 量化趋势线)】
    LLV(low, 55), HHV(high, 55)
@@ -25,21 +25,13 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v3)
    SMA5_3 = TDX_SMA(SMA5, 3, 1)
    V11 = 3 × SMA5 - 2 × SMA5_3
    趋势线 = EMA(V11, 3)
-
-【波动率】
-   20 日收益率样本标准差 (ddof=1), 年化 × √250
-   与 pandas rolling(20).std() 默认一致
-
-【版本历史】
-   2026-07-03 v3: 条件② 持有 vol 阈值 0.30 → 0.24 (回测 +4.1pp 年化, Calmar 1.82 → 2.09)
-   2026-07-03 v2: 条件① 阈值 0.35 → 0.40 (回测 +1.5pp 年化, +13.8% 终值)
 """
-import json, math, sys, urllib.request, os, argparse
+import json, math, sys, urllib.request, os, argparse, time
 from datetime import datetime, timezone, timedelta
 
 ETF_LIST = [
-    {"code": "510300", "name": "沪深 ETF", "market": "sh"},
-    {"code": "159915", "name": "创业 ETF",  "market": "sz"},
+    {"code": "510300", "name": "沪深300 ETF", "market": "sh"},
+    {"code": "159915", "name": "创业板 ETF",  "market": "sz"},
     {"code": "513100", "name": "纳指 ETF",    "market": "sh"},
     {"code": "518880", "name": "黄金 ETF",    "market": "sh"},
 ]
@@ -52,10 +44,10 @@ TIMEOUT = 15
 CN_TZ = timezone(timedelta(hours=8))
 
 # 风控阈值
-AVG_VOL_THRESHOLD = 0.40     # 条件①: 等权平均 vol20 阈值 (2026-07-03 从 0.35 放宽, 回测 +1.5pp 年化)
+AVG_VOL_THRESHOLD = 0.40     # 条件①: 等权平均 vol20 阈值
 TREND_THRESHOLD = 95.0       # 条件②: 持有趋势线阈值
-HOLD_VOL_THRESHOLD_B = 0.24  # 条件②: 持有 vol20 阈值 (2026-07-03 从 0.30 放宽, 回测 +4.1pp 年化, Calmar 2.09)
-HOLD_VOL_THRESHOLD_C = 0.36  # 条件③: 持有 vol20 阈值
+HOLD_VOL_THRESHOLD_B = 0.24  # 条件②: 持有 vol20 阈值
+HOLD_VOL_THRESHOLD_C = 0.40  # 条件③: 持有 vol20 阈值
 AVG_VOL_THRESHOLD_C = 0.30   # 条件③: 等权平均 vol20 阈值
 
 
@@ -64,12 +56,9 @@ AVG_VOL_THRESHOLD_C = 0.30   # 条件③: 等权平均 vol20 阈值
 # ============================================================
 def fetch_klines(code, market, days=FETCH_DAYS):
     urls = [
-        # 东财: klt=101 日线, fqt=1 前复权
         f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={'1.' if market=='sh' else '0.'}{code}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&end=20500101&lmt={days}",
-        # 新浪备选
         f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={'sh' if market=='sh' else 'sz'}{code}&datalen={days}&scale=240&ma=no",
     ]
-    import time as _time
     for attempt in range(3):
         for url_idx, url in enumerate(urls):
             try:
@@ -95,8 +84,10 @@ def fetch_klines(code, market, days=FETCH_DAYS):
                     if not isinstance(data, list) or len(data) < N: continue
                     valid = [{"day": d.get("day") or d.get("date", ""),
                               "close": float(d.get("close",0)),
-                              "open": float(d.get("open",0)), "high": float(d.get("high",0)),
-                              "low": float(d.get("low",0)), "volume": float(d.get("volume",0))}
+                              "open": float(d.get("open",0)),
+                              "high": float(d.get("high",0)),
+                              "low": float(d.get("low",0)),
+                              "volume": float(d.get("volume",0))}
                              for d in data if float(d.get("volume",0)) > 0]
                 if len(valid) < max(N, 60): continue
                 print(f"  [OK] {code}: {len(valid)} 条 ({valid[0]['day']} ~ {valid[-1]['day']})")
@@ -104,7 +95,7 @@ def fetch_klines(code, market, days=FETCH_DAYS):
             except Exception:
                 continue
         if attempt < 2:
-            _time.sleep(2 + attempt * 3)
+            time.sleep(2 + attempt * 3)
     print(f"  [ERR] {code}: 所有数据源均失败")
     return None
 
@@ -140,7 +131,6 @@ def calc_vol20(closes):
     rets = [(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent)) if recent[i-1] > 0]
     if len(rets) < VOL_WINDOW: return 0
     m = sum(rets) / len(rets)
-    # ddof=1 (样本方差), 与 pandas 默认一致, 与手机 JS 版对齐
     var = sum((r-m)**2 for r in rets) / (len(rets) - 1)
     return math.sqrt(var) * math.sqrt(TRADING_DAYS)
 
@@ -150,10 +140,10 @@ def tdx_sma(values, n, m):
     out = [float('nan')] * len(values)
     y = float('nan')
     for i, x in enumerate(values):
-        if x != x:  # NaN
+        if x != x:
             out[i] = y
             continue
-        if y != y:  # 第一个有效值
+        if y != y:
             y = x
         else:
             y = (x*m + y*(n-m)) / n
@@ -162,11 +152,7 @@ def tdx_sma(values, n, m):
 
 
 def calc_trend_line(highs, lows, closes):
-    """DDBBB 量化趋势线 (0-100)
-    RSV = (close-LLV55)/(HHV55-LLV55) × 100
-    V11 = 3 × SMA(SMA(RSV,5,1),3,1) 的变换
-    趋势线 = EMA(V11, 3)
-    """
+    """DDBB 量化趋势线 (0-100)"""
     n = len(closes)
     if n < 55: return 50.0
     rsv = []
@@ -184,7 +170,6 @@ def calc_trend_line(highs, lows, closes):
     sma5_3 = tdx_sma(sma5, 3, 1)
     v11 = [3*sma5[i] - 2*sma5_3[i] if (sma5[i]==sma5[i] and sma5_3[i]==sma5_3[i]) else 50.0
            for i in range(n)]
-    # EMA(V11, 3)
     ema = [float('nan')] * n
     ema[0] = v11[0]
     alpha = 2 / (3 + 1)
@@ -194,23 +179,16 @@ def calc_trend_line(highs, lows, closes):
 
 
 # ============================================================
-# 风控判断 (B+C+ 并集 v3)
+# 风控判断 (B+C+ 并集)
 # ============================================================
 def check_risk(avg_vol, hold_vol, hold_trend):
-    """
-    返回: (是否触发, 触发条件列表)
-    """
     triggered = []
-    # 条件①: 等权平均 vol > 40%
     if avg_vol > AVG_VOL_THRESHOLD:
         triggered.append(f"① 4标的等权平均 vol20 = {avg_vol*100:.1f}% > {AVG_VOL_THRESHOLD*100:.0f}% (市场整体高波动)")
-    # 条件②: 持有趋势线 > 95 且 持有 vol > 24%
     if hold_trend > TREND_THRESHOLD and hold_vol > HOLD_VOL_THRESHOLD_B:
         triggered.append(f"② 持有标的趋势线 = {hold_trend:.1f} > {TREND_THRESHOLD} 且 持有 vol20 = {hold_vol*100:.1f}% > {HOLD_VOL_THRESHOLD_B*100:.0f}% (个股阶段顶部)")
-    # 条件③: 持有 vol > 40% 且 等权平均 vol > 30%
     if hold_vol > HOLD_VOL_THRESHOLD_C and avg_vol > AVG_VOL_THRESHOLD_C:
         triggered.append(f"③ 持有 vol20 = {hold_vol*100:.1f}% > {HOLD_VOL_THRESHOLD_C*100:.0f}% 且 等权平均 vol20 = {avg_vol*100:.1f}% > {AVG_VOL_THRESHOLD_C*100:.0f}% (多标的共振)")
-
     return len(triggered) > 0, triggered
 
 
@@ -248,14 +226,9 @@ def run():
     if not valid_results:
         return None
 
-    # 排序: 得分最高的为推荐持有
     valid_results.sort(key=lambda r: r["score"], reverse=True)
     best = valid_results[0]
-
-    # 计算等权平均 vol
     avg_vol = sum(r["vol"] for r in valid_results) / len(valid_results)
-
-    # 风控检查
     triggered, reasons = check_risk(avg_vol, best["vol"], best["trend"])
 
     return {
@@ -269,24 +242,23 @@ def run():
 
 
 def format_action(data):
-    """格式化输出: 下一个交易日的操作建议"""
     best = data["best"]
     triggered = data["triggered"]
     reasons = data["reasons"]
     avg_vol = data["avg_vol"]
 
     lines = []
+    lines.append("━" * 50)
     lines.append("📊 ETF轮动 次日操作建议")
+    lines.append("━" * 50)
     lines.append("")
 
-    # 操作建议
     if triggered:
         lines.append("🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001")
     else:
         lines.append(f"🟢 操作: 满仓持有 {best['name']} ({best['code']})")
     lines.append("")
 
-    # 触发原因 / 安全状态
     if triggered:
         lines.append("⚠️ 风控触发原因:")
         for r in reasons:
@@ -295,52 +267,72 @@ def format_action(data):
         lines.append("✅ 风控未触发, 各项指标正常")
     lines.append("")
 
-    # 4 标的排名
     lines.append("📋 动量得分排名:")
-    medals = ["🥇", "🥈", "🥉", "    "]
+    medals = ["🥇", "🥈", "🥉", "  "]
     for i, r in enumerate(data["results"]):
         icon = medals[i] if i < 4 else "  "
         star = " ⬅ 推荐" if (not triggered and i == 0) else ""
         lines.append(f"   {icon} {r['name']:<8} "
-                     f"{r['score']:+.3f}  "
-                     f"{r['vol']*100:5.1f}%  "
-                     f"{r['trend']:5.1f}{star}")
+                     f"得分 {r['score']:+.3f}  "
+                     f"vol {r['vol']*100:5.1f}%  "
+                     f"趋势 {r['trend']:5.1f}{star}")
     lines.append("")
 
-    # 状态汇总
     lines.append("📈 当前市场状态:")
     lines.append(f"   等权平均 vol20: {avg_vol*100:.1f}%  (阈值 {AVG_VOL_THRESHOLD*100:.0f}%)")
     lines.append(f"   推荐: {best['name']} vol20 = {best['vol']*100:.1f}%  趋势线 = {best['trend']:.1f}")
     lines.append("")
 
-    # 时间提示
     lines.append("⏰ 执行时间:")
     lines.append("   明日 09:30 开盘执行")
     if triggered:
         lines.append("   14:50 前买 GC001 / R-001 隔夜逆回购")
     lines.append("")
+    lines.append("━" * 50)
     return "\n".join(lines)
 
 
-def send_feishu(webhook_url, text):
-    payload = json.dumps({
-        "msg_type": "text",
-        "content": {"text": text}
-    }).encode("utf-8")
-    req = urllib.request.Request(webhook_url, data=payload,
-                                headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            result = resp.read().decode()
-            print(f"[Feishu] 发送结果: {result}")
-            return True
-    except Exception as e:
-        print(f"[Feishu] 发送失败: {e}")
-        return False
+def send_feishu(webhook_url, text, max_retries=3):
+    """发送到飞书 webhook, 支持 11232 限流自动重试"""
+    payload = json.dumps({"msg_type": "text", "content": {"text": text}}).encode("utf-8")
+    for attempt in range(max_retries):
+        req = urllib.request.Request(webhook_url, data=payload,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                try:
+                    result = json.loads(raw)
+                except Exception:
+                    print(f"[Feishu] 第 {attempt+1}/{max_retries} 次: 返回非 JSON: {raw[:200]}")
+                    if attempt < max_retries - 1:
+                        time.sleep(5)
+                    continue
+                code = result.get("code", 0)
+                msg = result.get("msg", "")
+                print(f"[Feishu] 第 {attempt+1}/{max_retries} 次: code={code} msg={msg}")
+                if code == 0:
+                    return True
+                # 11232 = 频率受限, 等待 62s 后重试 (飞书限流窗口为 1 分钟)
+                if code == 11232:
+                    if attempt < max_retries - 1:
+                        print(f"[Feishu] 触发限流, 等待 62s 后重试...")
+                        time.sleep(62)
+                        continue
+                # 其他业务错误不重试
+                print(f"[Feishu] 业务失败, 不重试: code={code} msg={msg}")
+                return False
+        except Exception as e:
+            print(f"[Feishu] 第 {attempt+1}/{max_retries} 次异常: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            return False
+    return False
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ETF轮动选股器 (B+C+ 并集方案 v3)")
+    parser = argparse.ArgumentParser(description="ETF轮动选股器 (B+C+ 并集方案)")
     parser.add_argument("--feishu", action="store_true", help="发送结果到飞书 Webhook")
     args = parser.parse_args()
 
@@ -349,9 +341,10 @@ def main():
         print("[错误] 请设置 FEISHU_WEBHOOK_URL 环境变量")
         sys.exit(1)
 
-    print("  ETF轮动选股器")
+    print("=" * 60)
+    print("  ETF轮动选股器 (B+C+ 并集方案)")
     print("  " + datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M"))
-    print("=" * 10)
+    print("=" * 60)
 
     data = run()
     if data is None:
@@ -364,7 +357,10 @@ def main():
 
     if args.feishu:
         print("\n--- 推送到飞书 ---")
-        send_feishu(webhook_url, output)
+        ok = send_feishu(webhook_url, output)
+        if not ok:
+            print("[错误] 飞书推送最终失败")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
