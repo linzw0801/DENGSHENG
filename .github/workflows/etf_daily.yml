@@ -2,11 +2,14 @@ name: ETF轮动每日选股
 
 on:
   workflow_dispatch:
+  schedule:
+    # 每个交易日北京时间 15:30 (UTC 07:30) 自动运行
+    - cron: '30 7 * * 1-5'
 
 jobs:
   etf-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -15,11 +18,12 @@ jobs:
       - name: 运行选股并推送到飞书
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-        run: python etf_rotation_cloud.py --feishu
+        run: |
+          python etf_rotation_cloud.py --feishu 2>&1 | tee /tmp/output.txt
       - name: 输出到 Summary
         if: always()
         run: |
           echo '### ETF轮动选股报告' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          python etf_rotation_cloud.py >> $GITHUB_STEP_SUMMARY
+          cat /tmp/output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
