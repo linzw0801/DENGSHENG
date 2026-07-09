@@ -2,9 +2,6 @@ name: ETF轮动每日选股
 
 on:
   workflow_dispatch:
-  schedule:
-    # 工作日北京时间 15:30 (UTC 07:30) 自动运行
-    - cron: '30 7 * * 1-5'
 
 jobs:
   etf-scan:
