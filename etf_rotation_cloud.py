@@ -493,7 +493,6 @@ def generate_html(data):
           <strong style="color:#b45309;">⚠️ 纪律</strong><br>
           • 信号机械执行,不做主观判断<br>
           • 触发即清仓,风控消失再进场<br>
-          • 12.5 年回测包含 1 个完整年度负收益,需要心理准备
         </div>
       </td></tr>
 
