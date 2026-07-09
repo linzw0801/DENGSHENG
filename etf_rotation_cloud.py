@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v3)
+ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v4)
 =========================================
 数据源: 东方财富 + 新浪 (双备份 + 重试)
 推送通道: 飞书 Webhook + QQ 邮箱 (HTML 邮件)
@@ -15,11 +15,11 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v3)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
 
 【版本历史】
-   2026-07-09 v4: 增加 QQ 邮箱 HTML 邮件推送 (--email)
+   2026-07-09 v4: 增加 QQ 邮箱 HTML 邮件推送 (--email), HTML 模板优化排版
    2026-07-03 v3: 条件② 持有 vol 阈值 0.30 → 0.24
    2026-07-03 v2: 条件① 阈值 0.35 → 0.40
 """
-import json, math, sys, urllib.request, os, argparse, time, smtplib
+import json, math, sys, urllib.request, os, argparse, time, smtplib, re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr, formatdate
@@ -262,14 +262,13 @@ def format_action(data):
     lines.append("")
 
     lines.append("📋 动量得分排名:")
-    medals = ["🥇", "🥈", "🥉", "  "]
+    medals = ["🥇", "🥈", "🥉", "🏳️"]
     for i, r in enumerate(data["results"]):
-        icon = medals[i] if i < 4 else "  "
-        star = " ⬅ 推荐" if (not is_risk and i == 0) else ""
+        icon = medals[i]
         lines.append(f"   {icon} {r['name']:<8} "
                      f"得分 {r['score']:+.3f}  "
                      f"vol {r['vol']*100:5.1f}%  "
-                     f"趋势 {r['trend']:5.1f}{star}")
+                     f"趋势 {r['trend']:5.1f}")
     lines.append("")
 
     lines.append("⏰ 执行时间:")
@@ -301,18 +300,18 @@ def gauge_card(label, value_pct, threshold_pct, color):
         </table>'''
 
 
-def ranking_row(rank, r, is_recommended):
-    medals = ["🥇", "🥈", "🥉", "④"]
+def ranking_row(rank, r):
+    medals = ["🥇", "🥈", "🥉", "🏳️"]
+    medal = medals[rank]
     score = r["score"]
     score_norm = max(0, min(100, (score + 0.5) * 100))
     score_color = "#10b981" if score > 0 else "#9ca3af"
     score_bar_color = "#10b981" if score > 0.1 else ("#f59e0b" if score > -0.1 else "#9ca3af")
-    star = ' <span style="background:#10b981;color:white;font-size:10px;padding:2px 6px;border-radius:3px;margin-left:6px;">推荐</span>' if is_recommended else ""
     return f'''
         <tr>
-          <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:18px;">{medals[rank]}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:18px;">{medal}</td>
           <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;">
-            <div style="font-size:14px;font-weight:600;color:#1f2937;">{r["name"]}<span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:6px;">{r["code"]}</span>{star}</div>
+            <div style="font-size:14px;font-weight:600;color:#1f2937;">{r["name"]}<span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:6px;">{r["code"]}</span></div>
           </td>
           <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;">
             <div style="font-size:14px;font-weight:700;color:{score_color};font-family:Consolas,monospace;">{score:+.3f}</div>
@@ -339,16 +338,16 @@ def generate_html(data):
         action_bg = "background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
         action_label_color = "#dc2626"
         action_title_color = "#991b1b"
-        action_label = "🔴 清仓 ETF · 全仓逆回购"
-        action_title = "GC001 / R-001 隔夜逆回购"
+        action_label = "操作建议"
+        action_title = "🔴 清仓 ETF · 全仓逆回购 GC001/R-001"
     else:
         action_bg = "background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-left:4px solid #10b981;"
         action_label_color = "#10b981"
         action_title_color = "#065f46"
-        action_label = "🟢 满仓持有"
-        action_title = f"{best['name']} ({best['code']})"
+        action_label = "操作建议"
+        action_title = f"🟢 满仓持有 {best['name']} ({best['code']})"
 
-    # 3 个风控条件全部展示, 触发的高亮
+    triggered_ids = set(triggered)
     risk_defs = [
         {"id": "①", "title": "市场整体高波动", "subtitle": "等权平均 vol20 > 40%",
          "detail": f"4 标的等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong>, 阈值 40%"},
@@ -360,43 +359,42 @@ def generate_html(data):
 
     risk_cards = ""
     for r in risk_defs:
-        is_on = r["id"] in triggered
+        is_on = r["id"] in triggered_ids
         if is_on:
             bg = "background:#fef2f2;border:1px solid #fecaca;"
             label_color = "#dc2626"
             title_color = "#991b1b"
             detail_color = "#7f1d1d"
-            badge = '<span style="background:#dc2626;color:white;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:6px;font-weight:700;">触发</span>'
+            badge = '<span style="background:#dc2626;color:white;font-size:9px;padding:2px 6px;border-radius:8px;margin-left:6px;font-weight:700;">触发</span>'
             icon = "🔴"
         else:
             bg = "background:#f9fafb;border:1px solid #e5e7eb;"
             label_color = "#9ca3af"
             title_color = "#6b7280"
             detail_color = "#9ca3af"
-            badge = '<span style="background:#e5e7eb;color:#6b7280;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:6px;font-weight:600;">未触发</span>'
+            badge = '<span style="background:#e5e7eb;color:#6b7280;font-size:9px;padding:2px 6px;border-radius:8px;margin-left:6px;font-weight:600;">未触发</span>'
             icon = "⚪"
 
         risk_cards += f'''
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="{bg}border-radius:6px;margin-bottom:8px;">
-          <tr><td style="padding:12px 16px;">
-            <div style="font-size:14px;font-weight:700;color:{title_color};line-height:1.4;">
-              <span style="font-size:16px;margin-right:4px;">{icon}</span>
-              <span style="font-size:15px;font-weight:700;">{r['id']}</span> {r['title']}{badge}
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="{bg}border-radius:6px;margin-bottom:6px;">
+          <tr><td style="padding:9px 14px;">
+            <div style="font-size:12px;font-weight:700;color:{title_color};line-height:1.3;">
+              <span style="font-size:13px;margin-right:4px;">{icon}</span>{r['id']} {r['title']}{badge}
             </div>
-            <div style="font-size:11px;color:{label_color};margin-top:3px;font-family:Consolas,monospace;">{r['subtitle']}</div>
-            <div style="font-size:12px;color:{detail_color};margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px dashed {('rgba(220,38,38,0.2)' if is_on else '#e5e7eb')};">{r['detail']}</div>
+            <div style="font-size:10px;color:{label_color};margin-top:2px;font-family:Consolas,monospace;">{r['subtitle']}</div>
+            <div style="font-size:11px;color:{detail_color};margin-top:4px;line-height:1.4;padding-top:4px;border-top:1px dashed {('rgba(220,38,38,0.2)' if is_on else '#e5e7eb')};">{r['detail']}</div>
           </td></tr>
         </table>'''
 
     risk_html = f'''
-    <tr><td style="padding:0 32px 20px 32px;">
-      <div style="font-size:12px;font-weight:700;color:#374151;letter-spacing:1px;margin-bottom:10px;">🛡️ 风控监测 ({len(triggered)}/3 触发)</div>
+    <tr><td style="padding:18px 32px 0 32px;">
+      <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">🛡️ 风控监测 <span style="font-size:12px;color:#dc2626;font-weight:700;background:#fef2f2;padding:2px 8px;border-radius:8px;margin-left:6px;">{len(triggered_ids)}/3 触发</span></div>
       {risk_cards}
     </td></tr>'''
 
     ranking_rows = ""
     for i, r in enumerate(data["results"]):
-        ranking_rows += ranking_row(i, r, is_recommended=(not is_risk and i == 0))
+        ranking_rows += ranking_row(i, r)
 
     avg_vol_color = "#dc2626" if avg_vol > AVG_VOL_THRESHOLD else "#10b981"
     hold_vol_color = "#dc2626" if best["vol"] > HOLD_VOL_THRESHOLD_C else ("#f59e0b" if best["vol"] > HOLD_VOL_THRESHOLD_B else "#10b981")
@@ -420,9 +418,9 @@ def generate_html(data):
     timeline_rows = ""
     for tm, action in timeline:
         timeline_rows += f'''
-            <tr><td style="padding:9px 0;border-bottom:1px solid #f3f4f6;">
-              <span style="display:inline-block;min-width:64px;color:#6b7280;font-weight:700;font-family:Consolas,monospace;font-size:12px;">{tm}</span>
-              <span style="color:#374151;font-size:13px;">{action}</span>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;">
+              <span style="display:inline-block;min-width:60px;color:#374151;font-weight:700;font-family:Consolas,monospace;font-size:13px;">{tm}</span>
+              <span style="color:#4b5563;font-size:13px;">{action}</span>
             </td></tr>'''
 
     avg_vol_card = gauge_card("等权平均 VOL20", avg_vol*100, AVG_VOL_THRESHOLD*100, avg_vol_color)
@@ -437,41 +435,40 @@ def generate_html(data):
   <tr><td align="center">
     <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.06);">
 
-      <tr><td style="background:linear-gradient(135deg,#1e3a8a 0%,#3730a3 50%,#4338ca 100%);padding:24px 32px;">
+      <tr><td style="background:linear-gradient(135deg,#1e3a8a 0%,#3730a3 50%,#4338ca 100%);padding:22px 32px;">
         <div style="font-size:11px;color:#a5b4fc;letter-spacing:2.5px;font-weight:600;">ETF ROTATION · DAILY REPORT</div>
-        <div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;letter-spacing:0.5px;">📊 ETF 轮动 次日操作建议</div>
-        <div style="font-size:12px;color:#c7d2fe;margin-top:8px;">数据日期 <strong style="color:#fff;">{data_date}</strong> · 生成于 {now}</div>
+        <div style="font-size:21px;font-weight:700;color:#ffffff;margin-top:5px;letter-spacing:0.5px;">📊 ETF 轮动 次日操作建议</div>
+        <div style="font-size:12px;color:#c7d2fe;margin-top:6px;">数据日期 <strong style="color:#fff;">{data_date}</strong> · 生成于 {now}</div>
       </td></tr>
 
-      <tr><td style="padding:20px 32px 0 32px;">
+      <tr><td style="padding:16px 32px 0 32px;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="{action_bg}">
-          <tr><td style="padding:18px 20px;">
-            <div style="font-size:10px;color:{action_label_color};font-weight:700;letter-spacing:2px;margin-bottom:4px;">操作建议</div>
-            <div style="font-size:20px;font-weight:700;color:{action_title_color};line-height:1.3;">{action_label}</div>
-            <div style="font-size:14px;color:{action_title_color};margin-top:4px;opacity:0.85;">{action_title}</div>
+          <tr><td style="padding:12px 16px;">
+            <div style="font-size:9px;color:{action_label_color};font-weight:700;letter-spacing:2px;margin-bottom:2px;">{action_label}</div>
+            <div style="font-size:16px;font-weight:700;color:{action_title_color};line-height:1.3;">{action_title}</div>
           </td></tr>
         </table>
       </td></tr>
 
       {risk_html}
 
-      <tr><td style="padding:0 32px 20px 32px;">
-        <div style="font-size:12px;font-weight:700;color:#374151;letter-spacing:1px;margin-bottom:10px;">📋 动量得分排名</div>
+      <tr><td style="padding:18px 32px 0 32px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📋 动量得分排名</div>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td width="36" style="padding:6px 8px;font-size:10px;color:#9ca3af;font-weight:600;">#</td>
-            <td style="padding:6px 8px;font-size:10px;color:#9ca3af;font-weight:600;">标的</td>
-            <td align="right" width="70" style="padding:6px 8px;font-size:10px;color:#9ca3af;font-weight:600;">得分</td>
-            <td width="120" style="padding:6px 8px;font-size:10px;color:#9ca3af;font-weight:600;">趋势强度</td>
-            <td align="right" width="55" style="padding:6px 8px;font-size:10px;color:#9ca3af;font-weight:600;">vol20</td>
-            <td align="right" width="45" style="padding:6px 8px;font-size:10px;color:#9ca3af;font-weight:600;">趋势</td>
+            <td width="36" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">#</td>
+            <td style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">标的</td>
+            <td align="right" width="70" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">得分</td>
+            <td width="120" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">趋势强度</td>
+            <td align="right" width="55" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">vol20</td>
+            <td align="right" width="45" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">趋势</td>
           </tr>
           {ranking_rows}
         </table>
       </td></tr>
 
-      <tr><td style="padding:0 32px 20px 32px;">
-        <div style="font-size:12px;font-weight:700;color:#374151;letter-spacing:1px;margin-bottom:10px;">📈 市场状态监控</div>
+      <tr><td style="padding:18px 32px 0 32px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📈 市场状态监控</div>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td width="33.33%" valign="top" style="padding-right:4px;">{avg_vol_card}</td>
@@ -481,14 +478,14 @@ def generate_html(data):
         </table>
       </td></tr>
 
-      <tr><td style="padding:0 32px 20px 32px;">
-        <div style="font-size:12px;font-weight:700;color:#374151;letter-spacing:1px;margin-bottom:10px;">⏰ 执行时间表</div>
+      <tr><td style="padding:18px 32px 0 32px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">⏰ 执行时间表</div>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           {timeline_rows}
         </table>
       </td></tr>
 
-      <tr><td style="padding:18px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
+      <tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
         <div style="font-size:11px;color:#6b7280;line-height:1.7;">
           <strong style="color:#374151;">📊 历史业绩</strong> (2014-2026, 12.5 年)<br>
           年化 <strong style="color:#1e3a8a;">+43.5%</strong> · 夏普 <strong>1.82</strong> · 最大回撤 <strong style="color:#dc2626;">-20.8%</strong> · Calmar <strong>2.09</strong> · 年均清仓 <strong>22 天</strong><br>
@@ -503,7 +500,7 @@ def generate_html(data):
     </table>
     <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;">
       <tr><td align="center" style="font-size:10px;color:#9ca3af;padding:4px 0;">
-        ETF 动量轮动 v3 · B+C+ 并集方案 · 由 GitHub Actions 自动推送
+        ETF 动量轮动 v4 · B+C+ 并集方案 · 由 GitHub Actions 自动推送
       </td></tr>
     </table>
   </td></tr>
@@ -555,12 +552,11 @@ def send_feishu(webhook_url, text, max_retries=3):
 def send_email(html_content, to_addr, from_addr, auth_code,
                smtp_host="smtp.qq.com", smtp_port=465, max_retries=3):
     """QQ 邮箱 SMTP SSL 推送 HTML 邮件"""
-    best_name = "ETF"
-    # 通过简单解析 HTML 提取操作标签作为标题 (避免改函数签名)
-    import re
     m = re.search(r'操作建议</div>\s*<div[^>]*>([^<]+)', html_content)
     if m:
         best_name = m.group(1).strip()
+    else:
+        best_name = "ETF日报"
 
     today_str = datetime.now(CN_TZ).strftime("%m-%d")
     subject = f"【ETF日报】{best_name} ({today_str})"
@@ -593,14 +589,14 @@ def send_email(html_content, to_addr, from_addr, auth_code,
 # 主入口
 # ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="ETF轮动选股器 (B+C+ 并集方案 v3)")
+    parser = argparse.ArgumentParser(description="ETF轮动选股器 (B+C+ 并集方案 v4)")
     parser.add_argument("--feishu", action="store_true", help="发送结果到飞书 Webhook")
     parser.add_argument("--email",  action="store_true", help="发送 HTML 邮件")
     args = parser.parse_args()
 
     feishu_url = os.environ.get("FEISHU_WEBHOOK_URL", "")
     email_to   = os.environ.get("EMAIL_TO", "")
-    email_from = os.environ.get("EMAIL_FROM", email_to)  # 默认发件人=收件人 (QQ 邮箱自发自收)
+    email_from = os.environ.get("EMAIL_FROM", email_to)
     email_pass = os.environ.get("EMAIL_PASSWORD", "")
 
     if args.feishu and not feishu_url:
@@ -610,7 +606,7 @@ def main():
         if not email_pass: print("[错误] 请设置 EMAIL_PASSWORD 环境变量"); sys.exit(1)
 
     print("=" * 60)
-    print("  ETF轮动选股器 (B+C+ 并集方案 v3)")
+    print("  ETF轮动选股器 (B+C+ 并集方案 v4)")
     print("  " + datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M"))
     print("=" * 60)
 
@@ -623,14 +619,12 @@ def main():
     output = format_action(data)
     print(output)
 
-    # 推送飞书
     if args.feishu:
         print("\n--- 推送到飞书 ---")
         ok = send_feishu(feishu_url, output)
         if not ok:
             print("[警告] 飞书推送失败, 继续邮件推送")
 
-    # 推送 HTML 邮件
     if args.email:
         print("\n--- 推送到邮箱 ---")
         html = generate_html(data)
