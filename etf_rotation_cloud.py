@@ -513,9 +513,87 @@ def generate_html(data):
 # ============================================================
 # 推送通道
 # ============================================================
-def send_feishu(webhook_url, text, max_retries=3):
-    """发送到飞书 webhook, 支持 11232 限流自动重试"""
-    payload = json.dumps({"msg_type": "text", "content": {"text": text}}).encode("utf-8")
+def send_feishu(webhook_url, data, max_retries=3):
+    """发送飞书 interactive 卡片消息 (支持 11232 限流重试)
+    data: run() 返回的字典,包含 results / best / avg_vol / triggered / newest_date
+    """
+    best = data["best"]
+    avg_vol = data["avg_vol"]
+    triggered = data["triggered"]
+    is_risk = len(triggered) > 0
+
+    # Header 颜色 (red=清仓, green=持有)
+    header_template = "red" if is_risk else "green"
+
+    # 主操作行
+    if is_risk:
+        op_line = "**🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001**"
+    else:
+        op_line = f"**🟢 操作: 满仓持有 {best['name']} ({best['code']})**"
+
+    # 3 个风控条件
+    risk_defs = [
+        ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
+        ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} / vol {best['vol']*100:.1f}% (阈值 95/24%)", "②" in triggered),
+        ("③", "多标的共振",     f"vol {best['vol']*100:.1f}% / 均 {avg_vol*100:.1f}% (阈值 40/30%)", "③" in triggered),
+    ]
+    risk_lines = []
+    for cid, title, vals, on in risk_defs:
+        if on:
+            risk_lines.append(f"<font color='red'>**🔴 {cid} {title} (触发)**</font>  \n{vals}")
+        else:
+            risk_lines.append(f"<font color='grey'>⚪ {cid} {title}</font>  \n{vals}")
+
+    # 排名
+    medals = ["🥇", "🥈", "🥉", "🏳️"]
+    rank_lines = []
+    for i, r in enumerate(data["results"]):
+        score_str = f"{r['score']:+.3f}"
+        if r["score"] > 0:
+            score_str = f"<font color='green'>{score_str}</font>"
+        elif r["score"] < 0:
+            score_str = f"<font color='grey'>{score_str}</font>"
+        rank_lines.append(f"{medals[i]} **{r['name']}** `{r['code']}` {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
+
+    # 执行时间
+    if is_risk:
+        timeline_md = "**09:30** 集合竞价卖出 ETF  \n**14:30-14:50** 买 GC001/R-001 隔夜逆回购"
+    else:
+        timeline_md = "**09:30** 集合竞价买入信号标的  \n持仓不动, 收盘后跑次日策略"
+
+    perf_md = "📊 **历史业绩** (2014-2026)  \n年化 +43.5% · 夏普 1.82 · 回撤 -20.8% · Calmar 2.09"
+
+    card = {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "📊 ETF轮动 · 次日操作建议"},
+                "template": header_template
+            },
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": op_line}},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**🛡️ 风控监测** ({len(triggered)}/3 触发)"}},
+                {"tag": "div", "fields": [
+                    {"is_short": True,  "text": {"tag": "lark_md", "content": risk_lines[0]}},
+                    {"is_short": True,  "text": {"tag": "lark_md", "content": risk_lines[1]}},
+                    {"is_short": False, "text": {"tag": "lark_md", "content": risk_lines[2]}},
+                ]},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "**📋 动量得分排名**"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(rank_lines)}},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**⏰ 执行时间**\n{timeline_md}"}},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": perf_md}},
+                {"tag": "note", "elements": [{"tag": "plain_text",
+                    "content": "信号机械执行 · 触发即清仓 · 不做主观判断"}]}
+            ]
+        }
+    }
+
+    payload = json.dumps(card, ensure_ascii=False).encode("utf-8")
     for attempt in range(max_retries):
         req = urllib.request.Request(webhook_url, data=payload,
                                      headers={"Content-Type": "application/json"})
@@ -621,7 +699,7 @@ def main():
 
     if args.feishu:
         print("\n--- 推送到飞书 ---")
-        ok = send_feishu(feishu_url, output)
+        ok = send_feishu(feishu_url, data)
         if not ok:
             print("[警告] 飞书推送失败, 继续邮件推送")
 
