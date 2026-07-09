@@ -3,7 +3,7 @@ name: ETF轮动每日选股
 on:
   workflow_dispatch:
   schedule:
-    # 每个交易日北京时间 15:30 (UTC 07:30) 自动运行
+    # 工作日北京时间 15:30 (UTC 07:30) 自动运行
     - cron: '30 7 * * 1-5'
 
 jobs:
@@ -15,11 +15,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: 运行选股并推送到飞书
+      - name: 运行选股并推送
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
+          EMAIL_PASSWORD:     ${{ secrets.EMAIL_PASSWORD }}
         run: |
-          python etf_rotation_cloud.py --feishu 2>&1 | tee /tmp/output.txt
+          python etf_rotation_cloud.py --feishu --email 2>&1 | tee /tmp/output.txt
       - name: 输出到 Summary
         if: always()
         run: |
