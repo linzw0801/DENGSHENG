@@ -252,9 +252,9 @@ def format_action(data):
 
     lines.append(f"🛡️ 风控监测 ({len(triggered)}/3 触发):")
     all_conditions = [
-        ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
-        ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} (阈值 95), 持有 vol {best['vol']*100:.1f}% (阈值 24%)", "②" in triggered),
-        ("③", "多标的共振",     f"持有 vol {best['vol']*100:.1f}% (阈值 40), 均 vol {avg_vol*100:.1f}% (阈值 30%)", "③" in triggered),
+        ( "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
+        ( "个股阶段顶部",   f"趋势 {best['trend']:.1f} (阈值 95), 持有 vol {best['vol']*100:.1f}% (阈值 24%)", "②" in triggered),
+        ( "多标的共振",     f"持有 vol {best['vol']*100:.1f}% (阈值 40), 均 vol {avg_vol*100:.1f}% (阈值 30%)", "③" in triggered),
     ]
     for cid, title, detail, on in all_conditions:
         icon = "🔴" if on else "⚪"
@@ -349,11 +349,11 @@ def generate_html(data):
 
     triggered_ids = set(triggered)
     risk_defs = [
-        {"id": "①", "title": "市场整体高波动", "subtitle": "等权平均 vol20 > 40%",
+        {"id": "title": "市场整体高波动", "subtitle": "等权平均 vol20 > 40%",
          "detail": f"4 标的等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong>, 阈值 40%"},
-        {"id": "②", "title": "个股阶段顶部", "subtitle": "持有趋势线 > 95 且 持有 vol20 > 24%",
+        {"id": "title": "个股阶段顶部", "subtitle": "持有趋势线 > 95 且 持有 vol20 > 24%",
          "detail": f"持有 <strong>{best['name']}</strong> 趋势线 = <strong>{best['trend']:.1f}</strong> (阈值 95), 持有 vol20 = <strong>{best['vol']*100:.1f}%</strong> (阈值 24%)"},
-        {"id": "③", "title": "多标的共振", "subtitle": "持有 vol20 > 40% 且 等权平均 vol20 > 30%",
+        {"id": "title": "多标的共振", "subtitle": "持有 vol20 > 40% 且 等权平均 vol20 > 30%",
          "detail": f"持有 <strong>{best['name']}</strong> vol20 = <strong>{best['vol']*100:.1f}%</strong> (阈值 40%), 等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong> (阈值 30%)"},
     ]
 
@@ -533,9 +533,9 @@ def send_feishu(webhook_url, data, max_retries=3):
 
     # 3 个风控条件
     risk_defs = [
-        ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
-        ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} / vol {best['vol']*100:.1f}% (阈值 95/24%)", "②" in triggered),
-        ("③", "多标的共振",     f"vol {best['vol']*100:.1f}% / 均 {avg_vol*100:.1f}% (阈值 40/30%)", "③" in triggered),
+        ("市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
+        ("个股阶段顶部",   f"趋势 {best['trend']:.1f} / vol {best['vol']*100:.1f}% (阈值 95/24%)", "②" in triggered),
+        ("多标的共振",     f"vol {best['vol']*100:.1f}% / 均 {avg_vol*100:.1f}% (阈值 40/30%)", "③" in triggered),
     ]
     risk_lines = []
     for cid, title, vals, on in risk_defs:
@@ -553,7 +553,7 @@ def send_feishu(webhook_url, data, max_retries=3):
             score_str = f"<font color='green'>{score_str}</font>"
         elif r["score"] < 0:
             score_str = f"<font color='grey'>{score_str}</font>"
-        rank_lines.append(f"{medals[i]} **{r['name']}** `{r['code']}` {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
+        rank_lines.append(f"{medals[i]} **{r['name']}** {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
 
     # 执行时间
     if is_risk:
