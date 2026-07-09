@@ -26,8 +26,8 @@ from email.utils import formataddr, formatdate
 from datetime import datetime, timezone, timedelta
 
 ETF_LIST = [
-    {"code": "510300", "name": "沪深300 ETF", "market": "sh"},
-    {"code": "159915", "name": "创业板 ETF",  "market": "sz"},
+    {"code": "510300", "name": "沪深 ETF", "market": "sh"},
+    {"code": "159915", "name": "创业 ETF",  "market": "sz"},
     {"code": "513100", "name": "纳指 ETF",    "market": "sh"},
     {"code": "518880", "name": "黄金 ETF",    "market": "sh"},
 ]
@@ -252,13 +252,13 @@ def format_action(data):
 
     lines.append(f"🛡️ 风控监测 ({len(triggered)}/3 触发):")
     all_conditions = [
-        ( "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
-        ( "个股阶段顶部",   f"趋势 {best['trend']:.1f} (阈值 95), 持有 vol {best['vol']*100:.1f}% (阈值 24%)", "②" in triggered),
-        ( "多标的共振",     f"持有 vol {best['vol']*100:.1f}% (阈值 40), 均 vol {avg_vol*100:.1f}% (阈值 30%)", "③" in triggered),
+        ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
+        ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} (阈值 95), 持有 vol {best['vol']*100:.1f}% (阈值 24%)", "②" in triggered),
+        ("③", "多标的共振",     f"持有 vol {best['vol']*100:.1f}% (阈值 40), 均 vol {avg_vol*100:.1f}% (阈值 30%)", "③" in triggered),
     ]
     for cid, title, detail, on in all_conditions:
         icon = "🔴" if on else "⚪"
-        lines.append(f"   {icon} {cid} {title}: {detail}  {'【触发】' if on else ''}")
+        lines.append(f"   {icon} {title}: {detail}  {'【触发】' if on else ''}")
     lines.append("")
 
     lines.append("📋 动量得分排名:")
@@ -349,11 +349,11 @@ def generate_html(data):
 
     triggered_ids = set(triggered)
     risk_defs = [
-        {"id": "title": "市场整体高波动", "subtitle": "等权平均 vol20 > 40%",
+        {"id": "①", "title": "市场整体高波动", "subtitle": "等权平均 vol20 > 40%",
          "detail": f"4 标的等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong>, 阈值 40%"},
-        {"id": "title": "个股阶段顶部", "subtitle": "持有趋势线 > 95 且 持有 vol20 > 24%",
+        {"id": "②", "title": "个股阶段顶部", "subtitle": "持有趋势线 > 95 且 持有 vol20 > 24%",
          "detail": f"持有 <strong>{best['name']}</strong> 趋势线 = <strong>{best['trend']:.1f}</strong> (阈值 95), 持有 vol20 = <strong>{best['vol']*100:.1f}%</strong> (阈值 24%)"},
-        {"id": "title": "多标的共振", "subtitle": "持有 vol20 > 40% 且 等权平均 vol20 > 30%",
+        {"id": "③", "title": "多标的共振", "subtitle": "持有 vol20 > 40% 且 等权平均 vol20 > 30%",
          "detail": f"持有 <strong>{best['name']}</strong> vol20 = <strong>{best['vol']*100:.1f}%</strong> (阈值 40%), 等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong> (阈值 30%)"},
     ]
 
@@ -379,7 +379,7 @@ def generate_html(data):
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="{bg}border-radius:6px;margin-bottom:6px;">
           <tr><td style="padding:9px 14px;">
             <div style="font-size:12px;font-weight:700;color:{title_color};line-height:1.3;">
-              <span style="font-size:13px;margin-right:4px;">{icon}</span>{r['id']} {r['title']}{badge}
+              <span style="font-size:13px;margin-right:4px;">{icon}</span>{r['title']}{badge}
             </div>
             <div style="font-size:10px;color:{label_color};margin-top:2px;font-family:Consolas,monospace;">{r['subtitle']}</div>
             <div style="font-size:11px;color:{detail_color};margin-top:4px;line-height:1.4;padding-top:4px;border-top:1px dashed {('rgba(220,38,38,0.2)' if is_on else '#e5e7eb')};">{r['detail']}</div>
@@ -533,16 +533,16 @@ def send_feishu(webhook_url, data, max_retries=3):
 
     # 3 个风控条件
     risk_defs = [
-        ("市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
-        ("个股阶段顶部",   f"趋势 {best['trend']:.1f} / vol {best['vol']*100:.1f}% (阈值 95/24%)", "②" in triggered),
-        ("多标的共振",     f"vol {best['vol']*100:.1f}% / 均 {avg_vol*100:.1f}% (阈值 40/30%)", "③" in triggered),
+        ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
+        ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} / vol {best['vol']*100:.1f}% (阈值 95/24%)", "②" in triggered),
+        ("③", "多标的共振",     f"vol {best['vol']*100:.1f}% / 均 {avg_vol*100:.1f}% (阈值 40/30%)", "③" in triggered),
     ]
     risk_lines = []
     for cid, title, vals, on in risk_defs:
         if on:
-            risk_lines.append(f"<font color='red'>**🔴 {cid} {title} (触发)**</font>  \n{vals}")
+            risk_lines.append(f"<font color='red'>**🔴 {title} (触发)**</font>  \n{vals}")
         else:
-            risk_lines.append(f"<font color='grey'>⚪ {cid} {title}</font>  \n{vals}")
+            risk_lines.append(f"<font color='grey'>⚪ {title}</font>  \n{vals}")
 
     # 排名
     medals = ["🥇", "🥈", "🥉", "🏳️"]
