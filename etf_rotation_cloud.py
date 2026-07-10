@@ -26,8 +26,8 @@ from email.utils import formataddr, formatdate
 from datetime import datetime, timezone, timedelta
 
 ETF_LIST = [
-    {"code": "510300", "name": "沪深300 ETF", "market": "sh"},
-    {"code": "159915", "name": "创业板 ETF",  "market": "sz"},
+    {"code": "510300", "name": "沪深 ETF", "market": "sh"},
+    {"code": "159915", "name": "创业 ETF",  "market": "sz"},
     {"code": "513100", "name": "纳指 ETF",    "market": "sh"},
     {"code": "518880", "name": "黄金 ETF",    "market": "sh"},
 ]
@@ -553,7 +553,7 @@ def send_feishu(webhook_url, data, max_retries=3):
             score_str = f"<font color='green'>{score_str}</font>"
         elif r["score"] < 0:
             score_str = f"<font color='grey'>{score_str}</font>"
-        rank_lines.append(f"{medals[i]} **{r['name']}** `{r['code']}` {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
+        rank_lines.append(f"{medals[i]} **{r['name']}** {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
 
     # 执行时间
     if is_risk:
