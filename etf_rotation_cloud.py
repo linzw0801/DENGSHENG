@@ -26,8 +26,8 @@ from email.utils import formataddr, formatdate
 from datetime import datetime, timezone, timedelta
 
 ETF_LIST = [
-    {"code": "510300", "name": "沪深 ETF", "market": "sh"},
-    {"code": "159915", "name": "创业 ETF",  "market": "sz"},
+    {"code": "510300", "name": "沪深300 ETF", "market": "sh"},
+    {"code": "159915", "name": "创业板 ETF",  "market": "sz"},
     {"code": "513100", "name": "纳指 ETF",    "market": "sh"},
     {"code": "518880", "name": "黄金 ETF",    "market": "sh"},
 ]
@@ -51,8 +51,8 @@ AVG_VOL_THRESHOLD_C = 0.30
 # ============================================================
 def fetch_klines(code, market, days=FETCH_DAYS):
     urls = [
-        f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={'1.' if market=='sh' else '0.'}{code}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&end=20500101&lmt={days}",
         f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={'sh' if market=='sh' else 'sz'}{code}&datalen={days}&scale=240&ma=no",
+        f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={'1.' if market=='sh' else '0.'}{code}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&end=20500101&lmt={days}",
     ]
     for attempt in range(3):
         for url_idx, url in enumerate(urls):
@@ -64,7 +64,7 @@ def fetch_klines(code, market, days=FETCH_DAYS):
                 req = urllib.request.Request(url, headers=headers)
                 with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                     raw = resp.read()
-                if url_idx == 0:
+                if "eastmoney" in url:
                     raw = raw.decode("utf-8")
                     d = json.loads(raw)
                     if not d.get("data") or not d["data"].get("klines"): continue
@@ -493,6 +493,7 @@ def generate_html(data):
           <strong style="color:#b45309;">⚠️ 纪律</strong><br>
           • 信号机械执行,不做主观判断<br>
           • 触发即清仓,风控消失再进场<br>
+          • 12.5 年回测全部正收益,但历史不代表未来
         </div>
       </td></tr>
 
@@ -552,7 +553,7 @@ def send_feishu(webhook_url, data, max_retries=3):
             score_str = f"<font color='green'>{score_str}</font>"
         elif r["score"] < 0:
             score_str = f"<font color='grey'>{score_str}</font>"
-        rank_lines.append(f"{medals[i]} **{r['name']}** {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
+        rank_lines.append(f"{medals[i]} **{r['name']}** `{r['code']}` {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
 
     # 执行时间
     if is_risk:
@@ -560,7 +561,7 @@ def send_feishu(webhook_url, data, max_retries=3):
     else:
         timeline_md = "**09:30** 集合竞价买入信号标的  \n持仓不动, 收盘后跑次日策略"
 
-    perf_md = "📊 **历史业绩** (2014-2026)  \n年化 +43.5% · 夏普 1.82 · 回撤 -20.8% · Calmar 2.09"
+    perf_md = "📊 **历史业绩** (2014-2026, 12.5 年)  \n年化 +43.5% · 夏普 1.82 · 回撤 -20.8% · 全部年度正收益"
 
     card = {
         "msg_type": "interactive",
