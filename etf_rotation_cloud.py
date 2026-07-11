@@ -668,24 +668,31 @@ def generate_charts(data):
         daily_pct = [(cl_vals[i]/cl_vals[i-1]-1)*100 for i in range(1, len(cl_vals))]
         # 累计涨跌幅（基准为第一天）
         cum_pct = [(cl_vals[i]/cl_vals[0]-1)*100 for i in range(len(cl_vals))]
+        total_ret = cum_pct[-1]
+        x_idx = np.arange(len(daily_pct))
         colors_bar = ['#e74c3c' if p < 0 else '#22a67e' for p in daily_pct]
-        ax.bar(range(len(daily_pct)), daily_pct, color=colors_bar, width=0.7, alpha=0.85)
+        ax.bar(x_idx, daily_pct, color=colors_bar, width=0.7, alpha=0.85)
         # 累计曲线覆盖在柱子上
         ax2 = ax.twinx()
-        ax2.plot(range(len(cum_pct)), cum_pct, color=etf_map[code]["color"], lw=2, alpha=0.8, marker='o', markersize=3)
-        # 累计曲线末端标注
-        ax2.annotate(f'累计{cum_pct[-1]:+.2f}%', (len(cum_pct)-1, cum_pct[-1]),
-                    textcoords="offset points", xytext=(8, 8), fontsize=MOBILE_LABEL, fontweight='bold',
-                    color=etf_map[code]["color"])
+        ax2.plot(x_idx, cum_pct[1:], color=etf_map[code]["color"], lw=2, alpha=0.8, marker='o', markersize=3)
         ax2.axhline(y=0, color='gray', lw=0.5, ls='--', alpha=0.5)
         ax2.set_ylabel('累计%', fontsize=9, color=etf_map[code]["color"])
         ax2.tick_params(axis='y', labelsize=8)
         # 每日涨跌幅y轴
         ax.axhline(y=0, color='gray', lw=0.5)
-        ax.set_title(f'{etf_map[code]["name"]} 近30日', fontsize=MOBILE_TITLE, fontweight='bold')
+        # 标题含累计
+        ret_color = '#e74c3c' if total_ret < -0.1 else '#22a67e'
+        ax.set_title(f'{etf_map[code]["name"]} 近30日  ({total_ret:+.2f}%)',
+                    fontsize=MOBILE_TITLE, fontweight='bold', color=ret_color)
         ax.set_ylabel('日涨跌%', fontsize=MOBILE_FONT)
         ax.grid(True, alpha=0.2, axis='y')
         ax.tick_params(axis='both', labelsize=MOBILE_TICK)
+        # 横轴改为日期格式，每隔5个交易日标一个
+        plot_labels = [d[5:] for d in plot_d]  # '07-10' 格式
+        tick_step = max(1, len(daily_pct)//5)
+        ax.set_xticks(x_idx[::tick_step])
+        ax.set_xticklabels([plot_labels[i+1] for i in range(0, len(daily_pct), tick_step)],
+                          fontsize=MOBILE_TICK, rotation=20)
     plt.tight_layout(pad=1.5)
     buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150); plt.close()
     chart_mini = base64.b64encode(buf.getvalue()).decode()
