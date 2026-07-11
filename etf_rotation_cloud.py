@@ -654,7 +654,7 @@ def generate_charts(data):
     buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150); plt.close()
     chart_trend = base64.b64encode(buf.getvalue()).decode()
 
-    # ----- 图2: 各ETF近30日涨跌幅（手机适配：2行2列，字放大）-----
+    # ----- 图2: 各ETF近30日涨跌幅（每日涨跌幅+累计曲线）-----
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for idx, code in enumerate(codes):
         if code not in raw_data: continue
@@ -663,19 +663,29 @@ def generate_charts(data):
         plot_d = all_dates[-nk:]
         dm = {raw_data[code]["dates"][i]: i for i in range(len(raw_data[code]["dates"]))}
         cl_vals = [float(raw_data[code]["close"][dm[d]]) for d in plot_d if dm.get(d) is not None]
-        if len(cl_vals) < 2: continue
-        base = cl_vals[0]
-        pct = [(v/base-1)*100 for v in cl_vals]
-        colors_bar = ['#e74c3c' if p < 0 else '#22a67e' for p in pct]
-        ax.bar(range(len(pct)), pct, color=colors_bar, width=0.7, alpha=0.85)
-        ax.plot(range(len(pct)), pct, color=etf_map[code]["color"], lw=1.5, alpha=0.6)
-        ax.axhline(y=0, color='gray', lw=0.5)
-        ax.set_title(f'{etf_map[code]["name"]} 近30日涨跌幅', fontsize=MOBILE_TITLE, fontweight='bold')
-        ax.set_ylabel('%', fontsize=MOBILE_FONT); ax.grid(True, alpha=0.2, axis='y')
-        ax.tick_params(axis='both', labelsize=MOBILE_TICK)
-        ax.annotate(f'{pct[-1]:+.2f}%', (len(pct)-1, pct[-1]),
+        if len(cl_vals) < 3: continue
+        # 每日涨跌幅
+        daily_pct = [(cl_vals[i]/cl_vals[i-1]-1)*100 for i in range(1, len(cl_vals))]
+        # 累计涨跌幅（基准为第一天）
+        cum_pct = [(cl_vals[i]/cl_vals[0]-1)*100 for i in range(len(cl_vals))]
+        colors_bar = ['#e74c3c' if p < 0 else '#22a67e' for p in daily_pct]
+        ax.bar(range(len(daily_pct)), daily_pct, color=colors_bar, width=0.7, alpha=0.85)
+        # 累计曲线覆盖在柱子上
+        ax2 = ax.twinx()
+        ax2.plot(range(len(cum_pct)), cum_pct, color=etf_map[code]["color"], lw=2, alpha=0.8, marker='o', markersize=3)
+        # 累计曲线末端标注
+        ax2.annotate(f'累计{cum_pct[-1]:+.2f}%', (len(cum_pct)-1, cum_pct[-1]),
                     textcoords="offset points", xytext=(8, 8), fontsize=MOBILE_LABEL, fontweight='bold',
-                    color='#e74c3c' if pct[-1]<0 else '#22a67e')
+                    color=etf_map[code]["color"])
+        ax2.axhline(y=0, color='gray', lw=0.5, ls='--', alpha=0.5)
+        ax2.set_ylabel('累计%', fontsize=9, color=etf_map[code]["color"])
+        ax2.tick_params(axis='y', labelsize=8)
+        # 每日涨跌幅y轴
+        ax.axhline(y=0, color='gray', lw=0.5)
+        ax.set_title(f'{etf_map[code]["name"]} 近30日', fontsize=MOBILE_TITLE, fontweight='bold')
+        ax.set_ylabel('日涨跌%', fontsize=MOBILE_FONT)
+        ax.grid(True, alpha=0.2, axis='y')
+        ax.tick_params(axis='both', labelsize=MOBILE_TICK)
     plt.tight_layout(pad=1.5)
     buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150); plt.close()
     chart_mini = base64.b64encode(buf.getvalue()).decode()
@@ -699,7 +709,7 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
     if chart_mini_b64:
         chart_section += f'''
       <tr><td style="padding:0 20px 14px 20px;">
-        <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日涨跌幅</div>
+        <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日走势（柱=日涨跌，线=累计）</div>
         <img src="data:image/png;base64,{chart_mini_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
 
