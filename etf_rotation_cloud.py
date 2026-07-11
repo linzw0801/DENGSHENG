@@ -305,9 +305,8 @@ def ranking_row(rank, r):
     medal = medals[rank]
     score = r["score"]
     score_norm = max(0, min(100, (score + 0.5) * 100))
-    # 红涨绿跌(A股习惯): 正动量=红, 负动量=绿
-    score_color = "#dc2626" if score > 0 else "#10b981"
-    score_bar_color = "#dc2626" if score > 0.1 else ("#f59e0b" if score > -0.1 else "#10b981")
+    score_color = "#10b981" if score > 0 else "#9ca3af"
+    score_bar_color = "#10b981" if score > 0.1 else ("#f59e0b" if score > -0.1 else "#9ca3af")
     return f'''
         <tr>
           <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:18px;">{medal}</td>
@@ -336,15 +335,13 @@ def generate_html(data):
     data_date = data["newest_date"]
 
     if is_risk:
-        # 红色 = 风险空仓(危险)
-        action_bg = "background:#fef2f2;background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
+        action_bg = "background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
         action_label_color = "#dc2626"
         action_title_color = "#991b1b"
         action_label = "操作建议"
         action_title = "🔴 清仓 ETF · 全仓逆回购 GC001/R-001"
     else:
-        # 绿色 = 无风险可操作(满仓持有)
-        action_bg = "background:#f0fdf4;background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-left:4px solid #10b981;"
+        action_bg = "background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-left:4px solid #10b981;"
         action_label_color = "#10b981"
         action_title_color = "#065f46"
         action_label = "操作建议"
@@ -411,10 +408,9 @@ def generate_html(data):
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;">
-  <div style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">{action_title} · ETF 轮动每日操作建议</div>
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;padding:20px 0;">
   <tr><td align="center">
-    <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.06);">
+    <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.06);">
 
       <tr><td style="background:linear-gradient(135deg,#1e3a8a 0%,#3730a3 50%,#4338ca 100%);padding:22px 32px;">
         <div style="font-size:11px;color:#a5b4fc;letter-spacing:2.5px;font-weight:600;">ETF ROTATION · DAILY REPORT</div>
@@ -462,7 +458,7 @@ def generate_html(data):
       <tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
         <div style="font-size:11px;color:#6b7280;line-height:1.7;">
           <strong style="color:#374151;">📊 历史业绩</strong> (2014-2026, 12.5 年)<br>
-          年化 <strong style="color:#dc2626;">+43.5%</strong> · 夏普 <strong>1.82</strong> · 最大回撤 <strong style="color:#10b981;">-20.8%</strong> · Calmar <strong>2.09</strong> · 年均清仓 <strong>22 天</strong><br>
+          年化 <strong style="color:#1e3a8a;">+43.5%</strong> · 夏普 <strong>1.82</strong> · 最大回撤 <strong style="color:#dc2626;">-20.8%</strong> · Calmar <strong>2.09</strong> · 年均清仓 <strong>22 天</strong><br>
           <br>
           <strong style="color:#b45309;">⚠️ 纪律</strong><br>
           • 信号机械执行,不做主观判断<br>
@@ -650,7 +646,7 @@ def generate_charts(data):
     ax.axhline(y=40, color='#e74c3c', lw=1, ls='--', alpha=0.6, label='vol=40%阈值')
     ax.set_ylabel('vol20(%)', fontsize=MOBILE_FONT)
     ax.set_title('vol20波动率趋势', fontsize=MOBILE_TITLE, pad=10)
-    ax.grid(True, alpha=0.3); ax.legend(fontsize=MOBILE_LEGEND, ncol=4)
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=MOBILE_LEGEND, ncol=4, loc='upper left', framealpha=0.8)
     ax.tick_params(axis='both', labelsize=MOBILE_TICK)
     ax.set_xticks(x_idx[::tick_step])
     ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=MOBILE_TICK, rotation=20)
@@ -674,8 +670,7 @@ def generate_charts(data):
         cum_pct = [(cl_vals[i]/cl_vals[0]-1)*100 for i in range(len(cl_vals))]
         total_ret = cum_pct[-1]
         x_idx = np.arange(len(daily_pct))
-        # 红涨绿跌(A股习惯): 上涨=红, 下跌=绿
-        colors_bar = ['#22a67e' if p < 0 else '#e74c3c' for p in daily_pct]
+        colors_bar = ['#e74c3c' if p < 0 else '#22a67e' for p in daily_pct]
         ax.bar(x_idx, daily_pct, color=colors_bar, width=0.7, alpha=0.85)
         # 累计曲线覆盖在柱子上
         ax2 = ax.twinx()
@@ -686,8 +681,7 @@ def generate_charts(data):
         # 每日涨跌幅y轴
         ax.axhline(y=0, color='gray', lw=0.5)
         # 标题含累计
-        # 红涨绿跌(A股习惯): 上涨=红, 下跌=绿
-        ret_color = '#22a67e' if total_ret < -0.1 else '#e74c3c'
+        ret_color = '#e74c3c' if total_ret < -0.1 else '#22a67e'
         ax.set_title(f'{etf_map[code]["name"]} 近30日  ({total_ret:+.2f}%)',
                     fontsize=MOBILE_TITLE, fontweight='bold', color=ret_color)
         ax.set_ylabel('日涨跌%', fontsize=MOBILE_FONT)
@@ -715,13 +709,13 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
     chart_section = ""
     if chart_trend_b64:
         chart_section += f'''
-      <tr><td style="padding:16px 20px 10px 20px;">
+      <tr><td style="padding:18px 32px 12px 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📈 动量得分 &amp; vol20 趋势 (近60日)</div>
         <img src="data:image/png;base64,{chart_trend_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
     if chart_mini_b64:
         chart_section += f'''
-      <tr><td style="padding:0 20px 14px 20px;">
+      <tr><td style="padding:0 32px 14px 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日走势（柱=日涨跌，线=累计）</div>
         <img src="data:image/png;base64,{chart_mini_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
