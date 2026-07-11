@@ -400,29 +400,6 @@ def generate_html(data):
     hold_vol_color = "#dc2626" if best["vol"] > HOLD_VOL_THRESHOLD_C else ("#f59e0b" if best["vol"] > HOLD_VOL_THRESHOLD_B else "#10b981")
     trend_color = "#dc2626" if best["trend"] > TREND_THRESHOLD else "#10b981"
 
-    if is_risk:
-        timeline = [
-            ("09:25", "集合竞价卖出全部 ETF 持仓"),
-            ("09:30", "开盘确认成交"),
-            ("14:30", "下单买 GC001 / R-001 隔夜逆回购"),
-            ("14:50", "⚠️ 不要拖到 14:50 后,利率会被打低"),
-        ]
-    else:
-        timeline = [
-            ("09:25", "集合竞价: 信号标的开盘买入"),
-            ("09:30", "开盘确认成交"),
-            ("持仓中", "继续持有,不做主观判断"),
-            ("15:00", "收盘后跑次日策略"),
-        ]
-
-    timeline_rows = ""
-    for tm, action in timeline:
-        timeline_rows += f'''
-            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;">
-              <span style="display:inline-block;min-width:60px;color:#374151;font-weight:700;font-family:Consolas,monospace;font-size:13px;">{tm}</span>
-              <span style="color:#4b5563;font-size:13px;">{action}</span>
-            </td></tr>'''
-
     avg_vol_card = gauge_card("等权平均 VOL20", avg_vol*100, AVG_VOL_THRESHOLD*100, avg_vol_color)
     hold_vol_card = gauge_card(f"持有 VOL20 · {best['name']}", best["vol"]*100, HOLD_VOL_THRESHOLD_C*100, hold_vol_color)
     trend_card = gauge_card(f"持有趋势线 · {best['name']}", best["trend"], TREND_THRESHOLD, trend_color)
@@ -475,13 +452,6 @@ def generate_html(data):
             <td width="33.33%" valign="top" style="padding:0 4px;">{hold_vol_card}</td>
             <td width="33.33%" valign="top" style="padding-left:4px;">{trend_card}</td>
           </tr>
-        </table>
-      </td></tr>
-
-      <tr><td style="padding:18px 32px 0 32px;">
-        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">⏰ 执行时间表</div>
-        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-          {timeline_rows}
         </table>
       </td></tr>
 
