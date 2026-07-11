@@ -1,0 +1,27 @@
+name: ETF 轮动日报
+
+on:
+  schedule:
+    # 每天北京时间 16:00 = UTC 08:00（A股收盘后）
+    - cron: '0 8 * * 1-5'
+  workflow_dispatch:  # 可手动在 GitHub 触发
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 执行选股 + 发送邮件
+        run: node index.js
+        env:
+          QQ_EMAIL: ${{ secrets.QQ_EMAIL }}
+          QQ_AUTH_CODE: ${{ secrets.QQ_AUTH_CODE }}

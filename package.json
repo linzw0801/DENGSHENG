@@ -1,0 +1,14 @@
+{
+  "name": "etf-rotator",
+  "version": "3.0.0",
+  "description": "ETF 轮动选股器 — Node.js 服务端版（每日收盘后自动选股并发送 HTML 邮件）",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js --no-mail"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "nodemailer": "^6.10.1"
+  }
+}

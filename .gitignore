@@ -1,0 +1,7 @@
+node_modules/
+.env
+cron.log
+latest-report.html
+*.shortcut
+__pycache__/
+.DS_Store
