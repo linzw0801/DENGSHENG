@@ -247,7 +247,7 @@ def format_action(data):
     if is_risk:
         lines.append("🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001")
     else:
-        lines.append(f"🔴 操作: 满仓持有 {best['name']} ({best['code']})")
+        lines.append(f"🟢 操作: 满仓持有 {best['name']} ({best['code']})")
     lines.append("")
 
     lines.append(f"🛡️ 风控监测 ({len(triggered)}/3 触发):")
@@ -336,17 +336,19 @@ def generate_html(data):
     data_date = data["newest_date"]
 
     if is_risk:
-        action_bg = "background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
+        # 红色 = 风险空仓(危险)
+        action_bg = "background:#fef2f2;background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
         action_label_color = "#dc2626"
         action_title_color = "#991b1b"
         action_label = "操作建议"
         action_title = "🔴 清仓 ETF · 全仓逆回购 GC001/R-001"
     else:
-        action_bg = "background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
-        action_label_color = "#dc2626"
-        action_title_color = "#991b1b"
+        # 绿色 = 无风险可操作(满仓持有)
+        action_bg = "background:#f0fdf4;background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-left:4px solid #10b981;"
+        action_label_color = "#10b981"
+        action_title_color = "#065f46"
         action_label = "操作建议"
-        action_title = f"🔴 满仓持有 {best['name']} ({best['code']})"
+        action_title = f"🟢 满仓持有 {best['name']} ({best['code']})"
 
     triggered_ids = set(triggered)
     risk_defs = [
@@ -409,9 +411,10 @@ def generate_html(data):
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;">
+  <div style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">{action_title} · ETF 轮动每日操作建议</div>
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;padding:20px 0;">
   <tr><td align="center">
-    <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.06);">
+    <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.06);">
 
       <tr><td style="background:linear-gradient(135deg,#1e3a8a 0%,#3730a3 50%,#4338ca 100%);padding:22px 32px;">
         <div style="font-size:11px;color:#a5b4fc;letter-spacing:2.5px;font-weight:600;">ETF ROTATION · DAILY REPORT</div>
@@ -750,7 +753,7 @@ def send_feishu(webhook_url, data, max_retries=3):
     if is_risk:
         op_line = "**🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001**"
     else:
-        op_line = f"**🔴 操作: 满仓持有 {best['name']} ({best['code']})**"
+        op_line = f"**🟢 操作: 满仓持有 {best['name']} ({best['code']})**"
 
     # 3 个风控条件
     risk_defs = [
