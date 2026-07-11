@@ -650,8 +650,8 @@ def generate_charts(data):
     ax.tick_params(axis='both', labelsize=MOBILE_TICK)
     ax.set_xticks(x_idx[::tick_step])
     ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=MOBILE_TICK, rotation=20)
-    plt.tight_layout(pad=1.5)
-    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150); plt.close()
+    plt.tight_layout(pad=2.0)
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight'); plt.close()
     chart_trend = base64.b64encode(buf.getvalue()).decode()
 
     # ----- 图2: 各ETF近30日涨跌幅（每日涨跌幅+累计曲线）-----
