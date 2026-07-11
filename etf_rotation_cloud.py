@@ -511,6 +511,186 @@ def generate_html(data):
 
 
 # ============================================================
+# 图表生成 (matplotlib → base64 → 嵌入邮件HTML)
+# ============================================================
+def generate_charts(data):
+    """生成动量得分趋势图和近30日涨跌幅图，返回(base64_trend, base64_mini)"""
+    import io, base64
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("[图表] matplotlib 未安装，跳过图表生成")
+        return None, None
+
+    etf_map = {
+        "510300": {"name": "沪深300", "color": "#2196F3"},
+        "159915": {"name": "创业板",   "color": "#e74c3c"},
+        "513100": {"name": "纳指ETF", "color": "#FF9800"},
+        "518880": {"name": "黄金ETF", "color": "#FFD700"},
+    }
+    codes = list(etf_map.keys())
+    markets = {"510300":"sh","159915":"sz","513100":"sh","518880":"sh"}
+
+    # 用和 run() 相同的 fetch_klines 函数拉取数据（带重试+双数据源）
+    print("[图表] 拉取数据生成图表...")
+    raw_data = {}
+    for code in codes:
+        market = markets[code]
+        klines = fetch_klines(code, market, days=200)
+        if klines and len(klines) >= 60:
+            raw_data[code] = {
+                "dates": [x["day"] for x in klines],
+                "close": np.array([x["close"] for x in klines]),
+                "open":  np.array([x["open"] for x in klines]),
+                "high":  np.array([x["high"] for x in klines]),
+                "low":   np.array([x["low"] for x in klines]),
+            }
+            print(f"  [图表] {code}: {len(klines)} 条")
+        else:
+            print(f"  [图表] {code}: 数据不足")
+            continue
+
+    if len(raw_data) < 2:
+        print("[图表] 数据不足，跳过图表")
+        return None, None
+
+    # 取交集日期
+    all_dates = sorted(set.intersection(*[set(raw_data[c]["dates"]) for c in raw_data]))
+    if len(all_dates) < 30:
+        return None, None
+
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
+
+    # ----- 图1: 动量得分 & vol20 趋势（近60日） -----
+    fig, axes = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+
+    n_days = min(60, len(all_dates))
+    plot_dates = all_dates[-n_days:]
+    x_idx = np.arange(len(plot_dates))
+
+    ax = axes[0]
+    for code in raw_data:
+        dm = {raw_data[code]["dates"][i]: i for i in range(len(raw_data[code]["dates"]))}
+        vals = []
+        for d in plot_dates:
+            idx = dm.get(d)
+            if idx is not None and idx >= 25:
+                c_all = raw_data[code]["close"][:idx+1]
+                c = c_all[-25:]
+                if min(c) > 0:
+                    y = np.log(c); x = np.arange(25.)
+                    sx,sy,sxx,sxy = x.sum(),y.sum(),(x*x).sum(),(x*y).sum()
+                    denom = 25*sxx-sx*sx
+                    if denom != 0:
+                        s = (25*sxy-sx*sy)/denom
+                        yr = np.exp(s*250)-1
+                        yp = s*x+(sy-s*sx)/25; ym = sy/25
+                        r2 = 1-((y-yp)**2).sum()/((y-ym)**2).sum() if ((y-ym)**2).sum() > 0 else 0
+                        vals.append(yr*r2)
+                    else: vals.append(np.nan)
+                else: vals.append(np.nan)
+            else: vals.append(np.nan)
+        ax.plot(x_idx, vals, color=etf_map[code]["color"], lw=1.5, alpha=0.8,
+                label=etf_map[code]["name"], marker='o', markersize=3)
+        if not np.isnan(vals[-1]) and vals[-1] is not None:
+            ax.annotate(f'{vals[-1]:.4f}', (x_idx[-1], vals[-1]),
+                        textcoords="offset points", xytext=(6, 4), fontsize=7.5,
+                        color=etf_map[code]["color"])
+    ax.set_ylabel('动量得分'); ax.set_title(f'ETF动量得分趋势 (近{n_days}日)')
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=9, ncol=4)
+    ax.axhline(y=0, color='gray', lw=0.5, ls='--')
+    tick_step = max(1, len(plot_dates)//6)
+    ax.set_xticks(x_idx[::tick_step])
+    ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=7, rotation=25)
+
+    ax = axes[1]
+    for code in raw_data:
+        dm = {raw_data[code]["dates"][i]: i for i in range(len(raw_data[code]["dates"]))}
+        vals = []
+        for d in plot_dates:
+            idx = dm.get(d)
+            if idx is not None and idx >= 21:
+                c_all = raw_data[code]["close"][:idx+1]
+                r = np.diff(c_all[-21:])/c_all[-21:-1]
+                v = float(np.std(r, ddof=1)*np.sqrt(250))*100
+                vals.append(v)
+            else: vals.append(np.nan)
+        ax.plot(x_idx, vals, color=etf_map[code]["color"], lw=1.2, alpha=0.7, label=etf_map[code]["name"])
+        if not np.isnan(vals[-1]) and vals[-1] is not None:
+            ax.annotate(f'{vals[-1]:.1f}%', (x_idx[-1], vals[-1]),
+                        textcoords="offset points", xytext=(6, 3), fontsize=7.5,
+                        color=etf_map[code]["color"])
+    ax.axhline(y=24, color='#e74c3c', lw=0.6, ls='--', alpha=0.4)
+    ax.axhline(y=40, color='#e74c3c', lw=1, ls='--', alpha=0.6, label='vol=40%阈值')
+    ax.set_ylabel('vol20(%)'); ax.set_title('vol20波动率趋势')
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=9, ncol=4)
+    ax.set_xticks(x_idx[::tick_step])
+    ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=7, rotation=25)
+    plt.tight_layout()
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=120); plt.close()
+    chart_trend = base64.b64encode(buf.getvalue()).decode()
+
+    # ----- 图2: 各ETF近30日涨跌幅 -----
+    fig, axes = plt.subplots(2, 2, figsize=(12, 7))
+    for idx, code in enumerate(codes):
+        if code not in raw_data: continue
+        ax = axes[idx//2][idx%2]
+        nk = 30
+        plot_d = all_dates[-nk:]
+        dm = {raw_data[code]["dates"][i]: i for i in range(len(raw_data[code]["dates"]))}
+        cl_vals = [float(raw_data[code]["close"][dm[d]]) for d in plot_d if dm.get(d) is not None]
+        if len(cl_vals) < 2: continue
+        base = cl_vals[0]
+        pct = [(v/base-1)*100 for v in cl_vals]
+        colors_bar = ['#e74c3c' if p < 0 else '#22a67e' for p in pct]
+        ax.bar(range(len(pct)), pct, color=colors_bar, width=0.7, alpha=0.85)
+        ax.plot(range(len(pct)), pct, color=etf_map[code]["color"], lw=1.5, alpha=0.6)
+        ax.axhline(y=0, color='gray', lw=0.5)
+        ax.set_title(f'{etf_map[code]["name"]} 近30日涨跌幅', fontsize=11)
+        ax.set_ylabel('%'); ax.grid(True, alpha=0.2, axis='y')
+        ax.annotate(f'{pct[-1]:+.2f}%', (len(pct)-1, pct[-1]),
+                    textcoords="offset points", xytext=(5, 5), fontsize=9, fontweight='bold',
+                    color='#e74c3c' if pct[-1]<0 else '#22a67e')
+    plt.tight_layout()
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=120); plt.close()
+    chart_mini = base64.b64encode(buf.getvalue()).decode()
+
+    print("[图表] 两张图表生成完成")
+    return chart_trend, chart_mini
+
+
+def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
+    """在邮件HTML的body末尾插入图表"""
+    if not chart_trend_b64 and not chart_mini_b64:
+        return html_content
+
+    chart_section = ""
+    if chart_trend_b64:
+        chart_section += f'''
+      <tr><td style="padding:18px 32px 12px 32px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📈 动量得分 &amp; vol20 趋势 (近60日)</div>
+        <img src="data:image/png;base64,{chart_trend_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
+      </td></tr>'''
+    if chart_mini_b64:
+        chart_section += f'''
+      <tr><td style="padding:0 32px 18px 32px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日涨跌幅</div>
+        <img src="data:image/png;base64,{chart_mini_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
+      </td></tr>'''
+
+    # 在历史业绩段落前插入图表
+    insert_marker = '<tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">'
+    if insert_marker in html_content:
+        return html_content.replace(insert_marker, chart_section + insert_marker, 1)
+    else:
+        return html_content.replace('</body>', chart_section + '</body>', 1)
+
+
+# ============================================================
 # 推送通道
 # ============================================================
 def send_feishu(webhook_url, data, max_retries=3):
@@ -706,6 +886,14 @@ def main():
     if args.email:
         print("\n--- 推送到邮箱 ---")
         html = generate_html(data)
+        # 生成图表并嵌入邮件
+        print("[图表] 开始生成图表...")
+        chart_t, chart_m = generate_charts(data)
+        if chart_t or chart_m:
+            html = inject_charts_into_html(html, chart_t, chart_m)
+            print("[Email] 已嵌入图表")
+        else:
+            print("[Email] 图表未生成，发送纯HTML邮件")
         ok = send_email(html, email_to, email_from, email_pass)
         if not ok:
             print("[错误] 邮件推送失败")
