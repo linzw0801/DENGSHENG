@@ -562,9 +562,35 @@ def generate_charts(data):
     if len(all_dates) < 30:
         return None, None
 
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    # Ubuntu/GitHub Actions 无 SimHei/YaHei，动态注册可用中文字体
+    import matplotlib.font_manager as fm
+    # 尝试常见中文字体路径
+    cjk_fonts = [
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+    ]
+    font_found = None
+    for fp in cjk_fonts:
+        if os.path.exists(fp):
+            fm.fontManager.addfont(fp)
+            font_found = os.path.basename(fp).rsplit('.', 1)[0]
+            break
+    if font_found:
+        font_list = [font_found, 'WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    else:
+        # 如果都没找到，用默认查找
+        font_list = ['WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    plt.rcParams['font.sans-serif'] = font_list
     plt.rcParams['axes.unicode_minus'] = False
 
+    # 手机适配：增大字体，提高dpi
+    MOBILE_FONT = 11   # 基础字号（手机友好）
+    MOBILE_LABEL = 10  # 标签字号
+    MOBILE_TITLE = 14  # 标题字号
+    MOBILE_LEGEND = 10 # 图例字号
+    MOBILE_TICK = 8    # 坐标轴刻度字号
+    
     # ----- 图1: 动量得分 & vol20 趋势（近60日） -----
     fig, axes = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
 
@@ -598,14 +624,16 @@ def generate_charts(data):
                 label=etf_map[code]["name"], marker='o', markersize=3)
         if not np.isnan(vals[-1]) and vals[-1] is not None:
             ax.annotate(f'{vals[-1]:.4f}', (x_idx[-1], vals[-1]),
-                        textcoords="offset points", xytext=(6, 4), fontsize=7.5,
+                        textcoords="offset points", xytext=(6, 4), fontsize=MOBILE_LABEL,
                         color=etf_map[code]["color"])
-    ax.set_ylabel('动量得分'); ax.set_title(f'ETF动量得分趋势 (近{n_days}日)')
-    ax.grid(True, alpha=0.3); ax.legend(fontsize=9, ncol=4)
+    ax.set_ylabel('动量得分', fontsize=MOBILE_FONT)
+    ax.set_title(f'ETF动量得分趋势 (近{n_days}日)', fontsize=MOBILE_TITLE, pad=10)
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=MOBILE_LEGEND, ncol=4)
     ax.axhline(y=0, color='gray', lw=0.5, ls='--')
-    tick_step = max(1, len(plot_dates)//6)
+    ax.tick_params(axis='both', labelsize=MOBILE_TICK)
+    tick_step = max(1, len(plot_dates)//5)
     ax.set_xticks(x_idx[::tick_step])
-    ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=7, rotation=25)
+    ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=MOBILE_TICK, rotation=20)
 
     ax = axes[1]
     for code in raw_data:
@@ -622,20 +650,22 @@ def generate_charts(data):
         ax.plot(x_idx, vals, color=etf_map[code]["color"], lw=1.2, alpha=0.7, label=etf_map[code]["name"])
         if not np.isnan(vals[-1]) and vals[-1] is not None:
             ax.annotate(f'{vals[-1]:.1f}%', (x_idx[-1], vals[-1]),
-                        textcoords="offset points", xytext=(6, 3), fontsize=7.5,
+                        textcoords="offset points", xytext=(6, 3), fontsize=MOBILE_LABEL,
                         color=etf_map[code]["color"])
     ax.axhline(y=24, color='#e74c3c', lw=0.6, ls='--', alpha=0.4)
     ax.axhline(y=40, color='#e74c3c', lw=1, ls='--', alpha=0.6, label='vol=40%阈值')
-    ax.set_ylabel('vol20(%)'); ax.set_title('vol20波动率趋势')
-    ax.grid(True, alpha=0.3); ax.legend(fontsize=9, ncol=4)
+    ax.set_ylabel('vol20(%)', fontsize=MOBILE_FONT)
+    ax.set_title('vol20波动率趋势', fontsize=MOBILE_TITLE, pad=10)
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=MOBILE_LEGEND, ncol=4)
+    ax.tick_params(axis='both', labelsize=MOBILE_TICK)
     ax.set_xticks(x_idx[::tick_step])
-    ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=7, rotation=25)
-    plt.tight_layout()
-    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=120); plt.close()
+    ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=MOBILE_TICK, rotation=20)
+    plt.tight_layout(pad=1.5)
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150); plt.close()
     chart_trend = base64.b64encode(buf.getvalue()).decode()
 
-    # ----- 图2: 各ETF近30日涨跌幅 -----
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7))
+    # ----- 图2: 各ETF近30日涨跌幅（手机适配：2行2列，字放大）-----
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for idx, code in enumerate(codes):
         if code not in raw_data: continue
         ax = axes[idx//2][idx%2]
@@ -650,13 +680,14 @@ def generate_charts(data):
         ax.bar(range(len(pct)), pct, color=colors_bar, width=0.7, alpha=0.85)
         ax.plot(range(len(pct)), pct, color=etf_map[code]["color"], lw=1.5, alpha=0.6)
         ax.axhline(y=0, color='gray', lw=0.5)
-        ax.set_title(f'{etf_map[code]["name"]} 近30日涨跌幅', fontsize=11)
-        ax.set_ylabel('%'); ax.grid(True, alpha=0.2, axis='y')
+        ax.set_title(f'{etf_map[code]["name"]} 近30日涨跌幅', fontsize=MOBILE_TITLE, fontweight='bold')
+        ax.set_ylabel('%', fontsize=MOBILE_FONT); ax.grid(True, alpha=0.2, axis='y')
+        ax.tick_params(axis='both', labelsize=MOBILE_TICK)
         ax.annotate(f'{pct[-1]:+.2f}%', (len(pct)-1, pct[-1]),
-                    textcoords="offset points", xytext=(5, 5), fontsize=9, fontweight='bold',
+                    textcoords="offset points", xytext=(8, 8), fontsize=MOBILE_LABEL, fontweight='bold',
                     color='#e74c3c' if pct[-1]<0 else '#22a67e')
-    plt.tight_layout()
-    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=120); plt.close()
+    plt.tight_layout(pad=1.5)
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150); plt.close()
     chart_mini = base64.b64encode(buf.getvalue()).decode()
 
     print("[图表] 两张图表生成完成")
@@ -671,15 +702,15 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
     chart_section = ""
     if chart_trend_b64:
         chart_section += f'''
-      <tr><td style="padding:18px 32px 12px 32px;">
-        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📈 动量得分 &amp; vol20 趋势 (近60日)</div>
-        <img src="data:image/png;base64,{chart_trend_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
+      <tr><td style="padding:16px 20px 10px 20px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📈 动量得分 &amp; vol20 趋势 (近60日)</div>
+        <img src="data:image/png;base64,{chart_trend_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
     if chart_mini_b64:
         chart_section += f'''
-      <tr><td style="padding:0 32px 18px 32px;">
-        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日涨跌幅</div>
-        <img src="data:image/png;base64,{chart_mini_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
+      <tr><td style="padding:0 20px 14px 20px;">
+        <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日涨跌幅</div>
+        <img src="data:image/png;base64,{chart_mini_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
 
     # 在历史业绩段落前插入图表
