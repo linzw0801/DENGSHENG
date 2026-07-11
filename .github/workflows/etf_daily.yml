@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - name: 安装依赖（含图表生成）
+        run: pip install numpy matplotlib
       - name: 运行选股并推送
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
