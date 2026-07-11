@@ -646,7 +646,7 @@ def generate_charts(data):
     ax.axhline(y=40, color='#e74c3c', lw=1, ls='--', alpha=0.6, label='vol=40%阈值')
     ax.set_ylabel('vol20(%)', fontsize=MOBILE_FONT)
     ax.set_title('vol20波动率趋势', fontsize=MOBILE_TITLE, pad=10)
-    ax.grid(True, alpha=0.3); ax.legend(fontsize=MOBILE_LEGEND, ncol=4, loc='upper left', framealpha=0.8)
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=MOBILE_LEGEND, ncol=1, loc='upper left', framealpha=0.8)
     ax.tick_params(axis='both', labelsize=MOBILE_TICK)
     ax.set_xticks(x_idx[::tick_step])
     ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=MOBILE_TICK, rotation=20)
@@ -710,13 +710,13 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
     if chart_trend_b64:
         chart_section += f'''
       <tr><td style="padding:18px 32px 12px 32px;">
-        <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📈 动量得分 &amp; vol20 趋势 (近60日)</div>
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">【动量得分】</div>
         <img src="data:image/png;base64,{chart_trend_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
     if chart_mini_b64:
         chart_section += f'''
       <tr><td style="padding:0 32px 14px 32px;">
-        <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb;">📊 各ETF近30日走势（柱=日涨跌，线=累计）</div>
+        <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">【ETF走势】</div>
         <img src="data:image/png;base64,{chart_mini_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
 
