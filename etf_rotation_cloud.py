@@ -247,7 +247,7 @@ def format_action(data):
     if is_risk:
         lines.append("🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001")
     else:
-        lines.append(f"🟢 操作: 满仓持有 {best['name']} ({best['code']})")
+        lines.append(f"🔴 操作: 满仓持有 {best['name']} ({best['code']})")
     lines.append("")
 
     lines.append(f"🛡️ 风控监测 ({len(triggered)}/3 触发):")
@@ -305,8 +305,9 @@ def ranking_row(rank, r):
     medal = medals[rank]
     score = r["score"]
     score_norm = max(0, min(100, (score + 0.5) * 100))
-    score_color = "#10b981" if score > 0 else "#9ca3af"
-    score_bar_color = "#10b981" if score > 0.1 else ("#f59e0b" if score > -0.1 else "#9ca3af")
+    # 红涨绿跌(A股习惯): 正动量=红, 负动量=绿
+    score_color = "#dc2626" if score > 0 else "#10b981"
+    score_bar_color = "#dc2626" if score > 0.1 else ("#f59e0b" if score > -0.1 else "#10b981")
     return f'''
         <tr>
           <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:18px;">{medal}</td>
@@ -341,11 +342,11 @@ def generate_html(data):
         action_label = "操作建议"
         action_title = "🔴 清仓 ETF · 全仓逆回购 GC001/R-001"
     else:
-        action_bg = "background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-left:4px solid #10b981;"
-        action_label_color = "#10b981"
-        action_title_color = "#065f46"
+        action_bg = "background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%);border-left:4px solid #dc2626;"
+        action_label_color = "#dc2626"
+        action_title_color = "#991b1b"
         action_label = "操作建议"
-        action_title = f"🟢 满仓持有 {best['name']} ({best['code']})"
+        action_title = f"🔴 满仓持有 {best['name']} ({best['code']})"
 
     triggered_ids = set(triggered)
     risk_defs = [
@@ -458,7 +459,7 @@ def generate_html(data):
       <tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
         <div style="font-size:11px;color:#6b7280;line-height:1.7;">
           <strong style="color:#374151;">📊 历史业绩</strong> (2014-2026, 12.5 年)<br>
-          年化 <strong style="color:#1e3a8a;">+43.5%</strong> · 夏普 <strong>1.82</strong> · 最大回撤 <strong style="color:#dc2626;">-20.8%</strong> · Calmar <strong>2.09</strong> · 年均清仓 <strong>22 天</strong><br>
+          年化 <strong style="color:#dc2626;">+43.5%</strong> · 夏普 <strong>1.82</strong> · 最大回撤 <strong style="color:#10b981;">-20.8%</strong> · Calmar <strong>2.09</strong> · 年均清仓 <strong>22 天</strong><br>
           <br>
           <strong style="color:#b45309;">⚠️ 纪律</strong><br>
           • 信号机械执行,不做主观判断<br>
@@ -670,7 +671,8 @@ def generate_charts(data):
         cum_pct = [(cl_vals[i]/cl_vals[0]-1)*100 for i in range(len(cl_vals))]
         total_ret = cum_pct[-1]
         x_idx = np.arange(len(daily_pct))
-        colors_bar = ['#e74c3c' if p < 0 else '#22a67e' for p in daily_pct]
+        # 红涨绿跌(A股习惯): 上涨=红, 下跌=绿
+        colors_bar = ['#22a67e' if p < 0 else '#e74c3c' for p in daily_pct]
         ax.bar(x_idx, daily_pct, color=colors_bar, width=0.7, alpha=0.85)
         # 累计曲线覆盖在柱子上
         ax2 = ax.twinx()
@@ -681,7 +683,8 @@ def generate_charts(data):
         # 每日涨跌幅y轴
         ax.axhline(y=0, color='gray', lw=0.5)
         # 标题含累计
-        ret_color = '#e74c3c' if total_ret < -0.1 else '#22a67e'
+        # 红涨绿跌(A股习惯): 上涨=红, 下跌=绿
+        ret_color = '#22a67e' if total_ret < -0.1 else '#e74c3c'
         ax.set_title(f'{etf_map[code]["name"]} 近30日  ({total_ret:+.2f}%)',
                     fontsize=MOBILE_TITLE, fontweight='bold', color=ret_color)
         ax.set_ylabel('日涨跌%', fontsize=MOBILE_FONT)
@@ -747,7 +750,7 @@ def send_feishu(webhook_url, data, max_retries=3):
     if is_risk:
         op_line = "**🔴 操作: 清仓 ETF, 全仓买逆回购 GC001/R-001**"
     else:
-        op_line = f"**🟢 操作: 满仓持有 {best['name']} ({best['code']})**"
+        op_line = f"**🔴 操作: 满仓持有 {best['name']} ({best['code']})**"
 
     # 3 个风控条件
     risk_defs = [
