@@ -534,23 +534,43 @@ def generate_charts(data):
 
     # Ubuntu/GitHub Actions 无 SimHei/YaHei，动态注册可用中文字体
     import matplotlib.font_manager as fm
-    # 尝试常见中文字体路径
-    cjk_fonts = [
+    # 动态检测或下载中文字体
+    # 先检查系统是否存在中文字体
+    cjk_candidates = [
         '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
     ]
-    font_found = None
-    for fp in cjk_fonts:
+    font_path = None
+    for fp in cjk_candidates:
         if os.path.exists(fp):
-            fm.fontManager.addfont(fp)
-            font_found = os.path.basename(fp).rsplit('.', 1)[0]
+            font_path = fp
             break
-    if font_found:
-        font_list = [font_found, 'WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    
+    if not font_path:
+        # 下载文泉驿等宽字体（~3MB，GitHub Actions 下载约3秒）
+        font_url = "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/03_NotoSansCJKsc.zip"
+        # 改用更小的直接ttf文件
+        font_url = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+        local_font = '/tmp/NotoSansCJKsc-Regular.otf'
+        if not os.path.exists(local_font):
+            try:
+                print("[字体] 下载中文字体...")
+                urllib.request.urlretrieve(font_url, local_font)
+                font_path = local_font
+                print("[字体] 下载完成")
+            except Exception as e:
+                print(f"[字体] 下载失败: {e}")
+    
+    if font_path:
+        fm.fontManager.addfont(font_path)
+        font_name = os.path.basename(font_path).rsplit('.',1)[0]
+        # OTF 文件的字体名规范
+        if 'NotoSansCJKsc' in font_path:
+            font_name = 'Noto Sans CJK SC'
+        font_list = [font_name, 'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
     else:
-        # 如果都没找到，用默认查找
-        font_list = ['WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+        font_list = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
     plt.rcParams['font.sans-serif'] = font_list
     plt.rcParams['axes.unicode_minus'] = False
 
