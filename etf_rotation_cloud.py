@@ -15,6 +15,8 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v4)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
 
 【版本历史】
+   2026-07-14 v5: 数据新鲜度检查 - 工作日 15:30 后必须拿到今天数据，否则重试 5 次
+                  每次 90s 间隔；非工作日/盘中不严格检查；失败则工作流 exit(1)
    2026-07-09 v4: 增加 QQ 邮箱 HTML 邮件推送 (--email), HTML 模板优化排版
    2026-07-03 v3: 条件② 持有 vol 阈值 0.30 → 0.24
    2026-07-03 v2: 条件① 阈值 0.35 → 0.40
@@ -39,6 +41,13 @@ FETCH_DAYS = 300
 TIMEOUT = 15
 CN_TZ = timezone(timedelta(hours=8))
 
+# 数据新鲜度检查参数
+FRESHNESS_RETRY_MAX = 5      # 最多重试次数（含首次）
+FRESHNESS_RETRY_WAIT = 90    # 每次重试间隔秒数
+FRESHNESS_MIN_HOUR = 15      # 15:00 之后才要求"今天数据"
+FRESHNESS_MIN_MINUTE = 30    # 15:30 之后才要求（券商结算延迟）
+
+
 AVG_VOL_THRESHOLD = 0.40
 TREND_THRESHOLD = 95.0
 HOLD_VOL_THRESHOLD_B = 0.24
@@ -47,8 +56,68 @@ AVG_VOL_THRESHOLD_C = 0.30
 
 
 # ============================================================
-# 数据获取 (东财 + 新浪 双数据源, 重试 3 轮)
+# 数据新鲜度检查 (避免取到昨天/节前数据)
 # ============================================================
+def is_after_market_close():
+    """判断当前北京时间是否已过 15:30 (收盘结算后)。"""
+    now = datetime.now(CN_TZ)
+    # weekday(): 0=周一 ... 6=周日
+    if now.weekday() >= 5:  # 周六周日
+        return False
+    cutoff = now.replace(hour=FRESHNESS_MIN_HOUR, minute=FRESHNESS_MIN_MINUTE, second=0, microsecond=0)
+    return now >= cutoff
+
+
+def should_require_today_data():
+    """是否应该要求最新数据是今天。
+
+    工作日 15:30 之后才要求今天数据。
+    周末、节假日（无盘中数据更新）、盘中 15:30 之前 都不严格要求。
+    """
+    return is_after_market_close()
+
+
+def fetch_realtime_quote(code, market):
+    """获取实时报价日期，用于和 K 线最新日期比对。
+
+    返回 quote_date 字符串 'YYYY-MM-DD' 或 None。
+    新浪 hq.sinajs.cn 返回的 date 字段是当前报价日期。
+    """
+    symbol = ('sh' if market == 'sh' else 'sz') + code
+    url = f"https://hq.sinajs.cn/list={symbol}"
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://finance.sina.com.cn"
+        })
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            raw = resp.read().decode("gbk", errors="ignore")
+        if not raw or "=" not in raw:
+            return None
+        # 格式: var hq_str_sh510300="name,open,prev_close,current,high,low,...,date,time,..."
+        parts = raw.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
+        if len(parts) < 32:
+            return None
+        # 字段 30=日期 'YYYY-MM-DD', 31=时间 'HH:MM:SS'
+        quote_date = parts[30].strip() if len(parts) > 30 else ""
+        return quote_date if re.match(r"^\d{4}-\d{2}-\d{2}$", quote_date) else None
+    except Exception:
+        return None
+
+
+def is_today_a_trading_day():
+    """通过实时报价判断今天是否是交易日。
+
+    若周末/节假日被触发，新浪报价里的 date 不会是今天。
+    """
+    qd = fetch_realtime_quote("510300", "sh")
+    if not qd:
+        return None  # 不确定
+    today = datetime.now(CN_TZ).strftime("%Y-%m-%d")
+    return qd == today
+
+
+
 def fetch_klines(code, market, days=FETCH_DAYS):
     urls = [
         f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={'sh' if market=='sh' else 'sz'}{code}&datalen={days}&scale=240&ma=no",
@@ -906,9 +975,59 @@ def main():
     print("  " + datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M"))
     print("=" * 60)
 
-    data = run()
+    # 判断是否需要严格的新鲜度检查
+    require_today = should_require_today_data()
+    today_str = datetime.now(CN_TZ).strftime("%Y-%m-%d")
+    print(f"[新鲜度] 当前北京时间 {datetime.now(CN_TZ).strftime('%H:%M')}")
+    if require_today:
+        print(f"[新鲜度] 工作日 15:30 后，要求最新数据日期 = {today_str}")
+    else:
+        print(f"[新鲜度] 非工作日或盘中，使用数据源返回的最新数据即可")
+
+    data = None
+    last_attempt_date = None
+    for attempt in range(1, FRESHNESS_RETRY_MAX + 1):
+        print(f"\n========== 第 {attempt}/{FRESHNESS_RETRY_MAX} 次尝试 ==========")
+        data = run()
+        if data is None:
+            print(f"[重试 {attempt}] run() 返回 None (无可用数据)")
+        else:
+            newest = data.get("newest_date", "")[:10]
+            last_attempt_date = newest
+            print(f"[重试 {attempt}] 最新数据日期: {newest}")
+
+            if not require_today:
+                # 非工作日或盘中：有数据就推送
+                print(f"[新鲜度] 非严格模式，直接采用")
+                break
+
+            if newest == today_str:
+                print(f"[新鲜度] ✅ 数据是今天的，开始推送")
+                break
+            else:
+                # 工作日 15:30 后但数据不是今天 — 可能是新浪/东财延迟
+                # 先判断今天是不是交易日（实时报价）
+                is_td = is_today_a_trading_day()
+                if is_td is False:
+                    print(f"[新鲜度] 实时报价显示今天非交易日（节假日），采用最新可用数据 {newest}")
+                    break
+                # 是交易日但数据不是今天，需要重试
+                if attempt < FRESHNESS_RETRY_MAX:
+                    print(f"[新鲜度] ⚠️  数据不是今天 ({today_str})，等待 {FRESHNESS_RETRY_WAIT}s 后重试...")
+                    time.sleep(FRESHNESS_RETRY_WAIT)
+                else:
+                    print(f"[新鲜度] ❌ 重试 {FRESHNESS_RETRY_MAX} 次仍未拿到今天数据")
+                    print(f"[新鲜度] 最后一次拿到的数据日期: {newest}")
+                    data = None  # 标记失败
+
     if data is None:
-        print("[错误] 无可用数据")
+        print()
+        print("=" * 60)
+        print("  ❌ 数据新鲜度校验失败")
+        print(f"  期望日期: {today_str}")
+        print(f"  实际日期: {last_attempt_date}")
+        print("  工作流标记为失败，请检查数据源")
+        print("=" * 60)
         sys.exit(1)
 
     print()
