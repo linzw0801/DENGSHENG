@@ -373,9 +373,19 @@ def ranking_row(rank, r):
     medals = ["🥇", "🥈", "🥉", "🏳️"]
     medal = medals[rank]
     score = r["score"]
-    score_norm = max(0, min(100, (score + 0.5) * 100))
     score_color = "#10b981" if score > 0 else "#9ca3af"
-    score_bar_color = "#10b981" if score > 0.1 else ("#f59e0b" if score > -0.1 else "#9ca3af")
+    # 趋势强度归一化: trend 值范围 0-100, 直接作为百分比
+    trend_val = r["trend"]
+    trend_norm = max(0, min(100, trend_val))
+    # 趋势颜色: >80 红(过热), 50-80 橙(强势), 20-50 绿(中性), <20 灰(弱势)
+    if trend_val >= 80:
+        trend_bar_color = "#dc2626"
+    elif trend_val >= 50:
+        trend_bar_color = "#f59e0b"
+    elif trend_val >= 20:
+        trend_bar_color = "#10b981"
+    else:
+        trend_bar_color = "#9ca3af"
     return f'''
         <tr>
           <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:18px;">{medal}</td>
@@ -387,7 +397,7 @@ def ranking_row(rank, r):
           </td>
           <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;width:120px;">
             <div style="background:#e5e7eb;border-radius:2px;height:6px;overflow:hidden;">
-              <div style="background:{score_bar_color};width:{score_norm:.0f}%;height:6px;border-radius:2px;"></div>
+              <div style="background:{trend_bar_color};width:{trend_norm:.0f}%;height:6px;border-radius:2px;"></div>
             </div>
           </td>
           <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280;font-family:Consolas,monospace;">{r["vol"]*100:.1f}%</td>
