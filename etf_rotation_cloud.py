@@ -395,13 +395,13 @@ def ranking_row(rank, r):
           <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;">
             <div style="font-size:14px;font-weight:700;color:{score_color};font-family:Consolas,monospace;">{score:+.3f}</div>
           </td>
+          <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280;font-family:Consolas,monospace;">{r["vol"]*100:.1f}%</td>
+          <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280;font-family:Consolas,monospace;">{r["trend"]:.1f}</td>
           <td style="padding:10px 8px;border-bottom:1px solid #f3f4f6;width:120px;">
             <div style="background:#e5e7eb;border-radius:2px;height:6px;overflow:hidden;">
               <div style="background:{trend_bar_color};width:{trend_norm:.0f}%;height:6px;border-radius:2px;"></div>
             </div>
           </td>
-          <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280;font-family:Consolas,monospace;">{r["vol"]*100:.1f}%</td>
-          <td align="right" style="padding:10px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280;font-family:Consolas,monospace;">{r["trend"]:.1f}</td>
         </tr>'''
 
 
@@ -515,9 +515,9 @@ def generate_html(data):
             <td width="36" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">#</td>
             <td style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">标的</td>
             <td align="right" width="70" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">得分</td>
-            <td width="120" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">趋势强度</td>
             <td align="right" width="55" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">vol20</td>
             <td align="right" width="45" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">趋势</td>
+            <td width="120" style="padding:6px 8px;font-size:10px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;">趋势强度</td>
           </tr>
           {ranking_rows}
         </table>
