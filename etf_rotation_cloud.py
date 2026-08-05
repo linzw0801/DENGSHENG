@@ -15,8 +15,10 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v4)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
 
 【版本历史】
-   2026-08-05 v6: 纳指ETF(513100)溢价监控 - 每日推送显示当前溢价率,
-                  溢价>3% 提示换低溢价替代品(513130/513320), >8% 警告勿直接买入
+   2026-08-05 v7: 纳指进场日给出具体买入标的 - 查询全部12只场内纳指ETF溢价,
+                  策略选股仍用 513100 动量, 但信号为纳指时推荐买全场溢价最低的ETF
+                  (修复 v6 错误替代品代码: 513130/513320 是港股ETF, 已替换为真实纳指ETF列表)
+   2026-08-05 v6: 纳指ETF(513100)溢价监控 - 每日推送显示当前溢价率
    2026-07-14 v5: 数据新鲜度检查 - 工作日 15:30 后必须拿到今天数据，否则重试 5 次
                   每次 90s 间隔；非工作日/盘中不严格检查；失败则工作流 exit(1)
    2026-07-09 v4: 增加 QQ 邮箱 HTML 邮件推送 (--email), HTML 模板优化排版
@@ -58,71 +60,125 @@ AVG_VOL_THRESHOLD_C = 0.30
 
 
 # ============================================================
-# 纳指ETF溢价检查 (513100 溢价过高时建议换低溢价替代品)
+# 纳指ETF溢价检查 (信号选股用 513100, 进场日买溢价最低的场内纳指ETF)
 # ============================================================
-# 低溢价纳指 ETF 替代品 (与 513100 同跟踪纳斯达克100)
-NQ_ALT_ETFS = [
-    {"code": "513130", "name": "华泰柏瑞纳指ETF", "market": "sh"},
-    {"code": "513320", "name": "博时纳指ETF",     "market": "sh"},
+# 全部跟踪纳斯达克100 的场内ETF (按上市时间排序)
+NQ_ETF_LIST = [
+    {"code": "513100", "name": "纳指ETF国泰",    "market": "sh"},
+    {"code": "159941", "name": "纳指ETF广发",    "market": "sz"},
+    {"code": "513300", "name": "纳斯达克ETF华夏", "market": "sh"},
+    {"code": "513110", "name": "纳指ETF华泰柏瑞", "market": "sh"},
+    {"code": "513390", "name": "纳指100ETF博时", "market": "sh"},
+    {"code": "513870", "name": "纳指ETF富国",    "market": "sh"},
+    {"code": "159632", "name": "纳斯达克ETF华安", "market": "sz"},
+    {"code": "159501", "name": "纳指ETF嘉实",    "market": "sz"},
+    {"code": "159513", "name": "纳斯达克100ETF大成", "market": "sz"},
+    {"code": "159659", "name": "纳斯达克100ETF招商", "market": "sz"},
+    {"code": "159660", "name": "纳指ETF汇添富",  "market": "sz"},
+    {"code": "159696", "name": "纳指ETF易方达",  "market": "sz"},
 ]
 
 
-def fetch_nq_premium():
-    """获取 513100 纳指ETF 当前溢价率。
+def fetch_nq_premium_all():
+    """查询全部纳指ETF的实时溢价。
 
     溢价 = 场内价 / IOPV - 1
-    返回 (premium_pct, price, iopv) 或 (None, None, None)
+    返回: [{code, name, market, price, iopv, premium_pct}, ...] 或 []
     """
+    results = []
+    # 批量获取场内价 + IOPV
+    price_syms = ",".join(f"{e['market']}{e['code']}" for e in NQ_ETF_LIST)
+    iopv_syms = ",".join(f"{e['market']}{e['code']}_iopv" for e in NQ_ETF_LIST)
+    price_map = {}
+    iopv_map = {}
     try:
-        # 场内价格
-        req = urllib.request.Request("https://hq.sinajs.cn/list=sh513100", headers={
+        req = urllib.request.Request(f"https://hq.sinajs.cn/list={price_syms}", headers={
             "User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             raw = resp.read().decode("gbk", errors="ignore")
-        parts = raw.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
-        price = float(parts[3]) if len(parts) > 3 and parts[3] else None
-        if price is None or price <= 0:
-            return None, None, None
+        for line in raw.strip().split("\n"):
+            line = line.strip()
+            if "=" not in line or "hq_str_" not in line:
+                continue
+            sym = line.split("hq_str_")[1].split("=")[0]
+            parts = line.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
+            if len(parts) > 3 and parts[3]:
+                price_map[sym] = float(parts[3])
+    except Exception:
+        return results
 
-        # IOPV (基金实时估值)
-        req2 = urllib.request.Request("https://hq.sinajs.cn/list=sh513100_iopv", headers={
+    try:
+        req2 = urllib.request.Request(f"https://hq.sinajs.cn/list={iopv_syms}", headers={
             "User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"})
         with urllib.request.urlopen(req2, timeout=TIMEOUT) as resp2:
             raw2 = resp2.read().decode("gbk", errors="ignore")
-        parts2 = raw2.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
-        iopv = float(parts2[2]) if len(parts2) > 2 and parts2[2] else None
-        if iopv is None or iopv <= 0:
-            return None, price, None
-
-        premium = (price / iopv - 1) * 100
-        return premium, price, iopv
+        for line in raw2.strip().split("\n"):
+            line = line.strip()
+            if "=" not in line or "hq_str_" not in line:
+                continue
+            sym = line.split("hq_str_")[1].split("=")[0]
+            if sym.endswith("_iopv"):
+                sym = sym[:-5]  # 去掉 _iopv 后缀, 与价格 key 对齐
+            parts = line.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
+            if len(parts) > 2 and parts[2]:
+                try:
+                    iopv_map[sym] = float(parts[2])
+                except ValueError:
+                    pass
     except Exception:
-        return None, None, None
+        pass
+
+    for e in NQ_ETF_LIST:
+        sym = f"{e['market']}{e['code']}"
+        price = price_map.get(sym)
+        iopv = iopv_map.get(sym)
+        if price is None or price <= 0 or iopv is None or iopv <= 0:
+            continue
+        results.append({
+            "code": e["code"],
+            "name": e["name"],
+            "market": e["market"],
+            "price": price,
+            "iopv": iopv,
+            "premium_pct": (price / iopv - 1) * 100,
+        })
+    results.sort(key=lambda x: x["premium_pct"])
+    return results
 
 
 def check_nq_premium_action():
-    """根据溢价给出操作建议。
+    """查询全部纳指ETF溢价, 找出最低的作为买入建议。
 
-    返回 dict: {premium_pct, price, iopv, suggestion, level}
-    level: 'normal'(<3%), 'high'(3-8%), 'extreme'(>8%)
+    返回 dict: {available, best, list, suggestion, level}
+    best: 溢价最低的ETF信息 (含是否 513100)
     """
-    premium, price, iopv = fetch_nq_premium()
-    if premium is None:
+    all_etfs = fetch_nq_premium_all()
+    if not all_etfs:
         return {"available": False}
-    if premium < 3:
+
+    best = all_etfs[0]
+    main_etf = next((e for e in all_etfs if e["code"] == "513100"), None)
+    main_prem = main_etf["premium_pct"] if main_etf else None
+
+    if main_prem is None:
+        return {"available": False}
+
+    if best["code"] == "513100":
         level = "normal"
-        suggestion = "溢价正常, 直接买 513100 即可"
-    elif premium < 8:
-        level = "high"
-        suggestion = f"溢价偏高, 建议买替代品 {NQ_ALT_ETFS[0]['name']} ({NQ_ALT_ETFS[0]['code']}) 或 {NQ_ALT_ETFS[1]['name']} ({NQ_ALT_ETFS[1]['code']})"
+        suggestion = f"513100 就是溢价最低 ({main_prem:+.1f}%), 直接买 513100"
+    elif main_prem < 3:
+        level = "normal"
+        suggestion = f"513100 溢价 {main_prem:+.1f}% (<3%), 直接买 513100 即可"
     else:
-        level = "extreme"
-        suggestion = f"溢价过高! 建议买 {NQ_ALT_ETFS[0]['name']} ({NQ_ALT_ETFS[0]['code']}) / {NQ_ALT_ETFS[1]['name']} ({NQ_ALT_ETFS[1]['code']}), 切勿直接买 513100"
+        level = "high"
+        suggestion = (f"513100 溢价 {main_prem:+.1f}%, 买更低溢价的 "
+                      f"{best['name']} ({best['code']}) {best['premium_pct']:+.1f}%")
+
     return {
         "available": True,
-        "premium_pct": premium,
-        "price": price,
-        "iopv": iopv,
+        "best": best,
+        "main_premium_pct": main_prem,
+        "all": all_etfs,
         "suggestion": suggestion,
         "level": level,
     }
@@ -365,8 +421,10 @@ def run():
     # 纳指溢价检查 (为切换决策提供依据)
     premium_info = check_nq_premium_action()
     if premium_info.get("available"):
-        print(f"[溢价] 513100 纳指ETF 溢价 {premium_info['premium_pct']:+.1f}% "
-              f"(价 {premium_info['price']:.3f} / IOPV {premium_info['iopv']:.3f})")
+        main_p = premium_info.get("main_premium_pct", 0)
+        best = premium_info.get("best", {})
+        print(f"[溢价] 513100 溢价 {main_p:+.1f}% | 最低: "
+              f"{best.get('name','?')} ({best.get('code','?')}) {best.get('premium_pct',0):+.1f}%")
         print(f"[溢价] {premium_info['suggestion']}")
     else:
         print("[溢价] 无法获取 IOPV, 跳过溢价提示")
@@ -423,16 +481,21 @@ def format_action(data):
                      f"趋势 {r['trend']:5.1f}")
     lines.append("")
 
-    # 纳指溢价提示
+    # 纳指溢价提示 (信号是纳指时, 给出具体买入标的)
     p_info = data.get("nq_premium", {})
     if p_info.get("available"):
-        pct = p_info["premium_pct"]
-        if pct > 3:
-            icon = "🔴" if pct > 8 else "🟠"
-            lines.append(f"{icon} ⚠️ 513100 溢价 {pct:+.1f}%")
-            lines.append(f"   {p_info['suggestion']}")
+        main_p = p_info.get("main_premium_pct", 0)
+        if best["code"] == "513100":
+            b = p_info.get("best", {})
+            if b.get("code") == "513100":
+                lines.append(f"🟢 纳指进场: 直接买 513100 (溢价 {main_p:+.1f}%, 全场最低)")
+            else:
+                lines.append(f"🟠 纳指进场: 买 {b.get('name','?')} ({b.get('code','?')}) "
+                             f"溢价 {b.get('premium_pct',0):+.1f}% < 513100 ({main_p:+.1f}%)")
+                lines.append(f"   策略选股仍用 513100 动量, 仅执行时换标的")
         else:
-            lines.append(f"🟢 513100 溢价 {pct:+.1f}%, 正常")
+            if main_p < 3:
+                lines.append(f"🟢 513100 溢价 {main_p:+.1f}%, 正常")
         lines.append("")
 
     lines.append("⏰ 执行时间:")
@@ -570,40 +633,40 @@ def generate_html(data):
     for i, r in enumerate(data["results"]):
         ranking_rows += ranking_row(i, r)
 
-    # 纳指溢价提示区块
+    # 纳指溢价提示区块 (信号是纳指时, 显示具体买入标的)
     p_info = data.get("nq_premium", {})
-    if p_info.get("available"):
-        pct = p_info["premium_pct"]
-        if pct > 8:
-            prem_bg = "background:#fef2f2;border:1px solid #fecaca;"
-            prem_color = "#dc2626"
-            prem_badge = '<span style="background:#dc2626;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">高溢价</span>'
-            prem_icon = "🔴"
-        elif pct > 3:
-            prem_bg = "background:#fffbeb;border:1px solid #fde68a;"
-            prem_color = "#b45309"
-            prem_badge = '<span style="background:#f59e0b;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">溢价偏高</span>'
-            prem_icon = "🟠"
-        else:
+    premium_html = ""
+    if p_info.get("available") and best["code"] == "513100":
+        main_p = p_info.get("main_premium_pct", 0)
+        b = p_info.get("best", {})
+        if b.get("code") == "513100":
             prem_bg = "background:#f0fdf4;border:1px solid #bbf7d0;"
             prem_color = "#15803d"
-            prem_badge = '<span style="background:#10b981;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">溢价正常</span>'
+            prem_badge = '<span style="background:#10b981;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">直接买入</span>'
             prem_icon = "🟢"
+            prem_detail = (f"全场溢价最低 ({main_p:+.1f}%), 直接买 <strong>513100 纳指ETF国泰</strong>")
+        else:
+            prem_bg = "background:#fffbeb;border:1px solid #fde68a;"
+            prem_color = "#b45309"
+            prem_badge = '<span style="background:#f59e0b;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">换标的买入</span>'
+            prem_icon = "🟠"
+            prem_detail = (f"513100 溢价 {main_p:+.1f}%, 买更低溢价的 "
+                           f"<strong>{b.get('name','?')} ({b.get('code','?')})</strong> "
+                           f"溢价 {b.get('premium_pct',0):+.1f}%<br>"
+                           f"<span style='font-size:10px;color:#9ca3af;'>策略选股仍用 513100 动量, 仅执行时换标的</span>")
         premium_html = f'''
         <tr><td style="padding:18px 32px 0 32px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="{prem_bg}border-radius:6px;">
             <tr><td style="padding:10px 14px;">
               <div style="font-size:12px;font-weight:700;color:{prem_color};line-height:1.3;">
-                {prem_icon} 纳指ETF(513100) 溢价 {pct:+.1f}%{prem_badge}
+                {prem_icon} 纳指进场买入建议{prem_badge}
               </div>
               <div style="font-size:11px;color:{prem_color};margin-top:3px;line-height:1.5;">
-                场内价 <strong>{p_info["price"]:.3f}</strong> / IOPV <strong>{p_info["iopv"]:.3f}</strong> · {p_info["suggestion"]}
+                {prem_detail}
               </div>
             </td></tr>
           </table>
         </td></tr>'''
-    else:
-        premium_html = ""
 
     avg_vol_color = "#dc2626" if avg_vol > AVG_VOL_THRESHOLD else "#10b981"
     hold_vol_color = "#dc2626" if best["vol"] > HOLD_VOL_THRESHOLD_C else ("#f59e0b" if best["vol"] > HOLD_VOL_THRESHOLD_B else "#10b981")
@@ -984,18 +1047,18 @@ def send_feishu(webhook_url, data, max_retries=3):
             score_str = f"<font color='grey'>{score_str}</font>"
         rank_lines.append(f"{medals[i]} **{r['name']}** {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
 
-    # 纳指溢价提示
+    # 纳指溢价提示 (信号是纳指时, 显示具体买入标的)
     p_info = data.get("nq_premium", {})
-    if p_info.get("available"):
-        pct = p_info["premium_pct"]
-        if pct > 8:
-            premium_md = f"🔴 **513100 溢价 {pct:+.1f}% (过高)**  \n{p_info['suggestion']}"
-        elif pct > 3:
-            premium_md = f"🟠 **513100 溢价 {pct:+.1f}% (偏高)**  \n{p_info['suggestion']}"
+    premium_md = None
+    if p_info.get("available") and best["code"] == "513100":
+        main_p = p_info.get("main_premium_pct", 0)
+        b = p_info.get("best", {})
+        if b.get("code") == "513100":
+            premium_md = f"🟢 **纳指进场: 直接买 513100**  \n全场溢价最低 ({main_p:+.1f}%)"
         else:
-            premium_md = f"🟢 513100 溢价 {pct:+.1f}%, 正常"
-    else:
-        premium_md = None
+            premium_md = (f"🟠 **纳指进场: 买 {b.get('name','?')} ({b.get('code','?')})**  \n"
+                          f"溢价 {b.get('premium_pct',0):+.1f}% < 513100 ({main_p:+.1f}%)  \n"
+                          f"策略选股仍用 513100 动量, 仅执行换标的")
 
     # 执行时间
     if is_risk:
