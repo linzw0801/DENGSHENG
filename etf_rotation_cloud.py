@@ -422,9 +422,9 @@ def run():
     premium_info = check_nq_premium_action()
     if premium_info.get("available"):
         main_p = premium_info.get("main_premium_pct", 0)
-        best = premium_info.get("best", {})
+        lowest_best = premium_info.get("best", {})
         print(f"[溢价] 513100 溢价 {main_p:+.1f}% | 最低: "
-              f"{best.get('name','?')} ({best.get('code','?')}) {best.get('premium_pct',0):+.1f}%")
+              f"{lowest_best.get('name','?')} ({lowest_best.get('code','?')}) {lowest_best.get('premium_pct',0):+.1f}%")
         print(f"[溢价] {premium_info['suggestion']}")
     else:
         print("[溢价] 无法获取 IOPV, 跳过溢价提示")
