@@ -15,6 +15,8 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v4)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
 
 【版本历史】
+   2026-08-05 v6: 纳指ETF(513100)溢价监控 - 每日推送显示当前溢价率,
+                  溢价>3% 提示换低溢价替代品(513130/513320), >8% 警告勿直接买入
    2026-07-14 v5: 数据新鲜度检查 - 工作日 15:30 后必须拿到今天数据，否则重试 5 次
                   每次 90s 间隔；非工作日/盘中不严格检查；失败则工作流 exit(1)
    2026-07-09 v4: 增加 QQ 邮箱 HTML 邮件推送 (--email), HTML 模板优化排版
@@ -53,6 +55,77 @@ TREND_THRESHOLD = 95.0
 HOLD_VOL_THRESHOLD_B = 0.24
 HOLD_VOL_THRESHOLD_C = 0.40
 AVG_VOL_THRESHOLD_C = 0.30
+
+
+# ============================================================
+# 纳指ETF溢价检查 (513100 溢价过高时建议换低溢价替代品)
+# ============================================================
+# 低溢价纳指 ETF 替代品 (与 513100 同跟踪纳斯达克100)
+NQ_ALT_ETFS = [
+    {"code": "513130", "name": "华泰柏瑞纳指ETF", "market": "sh"},
+    {"code": "513320", "name": "博时纳指ETF",     "market": "sh"},
+]
+
+
+def fetch_nq_premium():
+    """获取 513100 纳指ETF 当前溢价率。
+
+    溢价 = 场内价 / IOPV - 1
+    返回 (premium_pct, price, iopv) 或 (None, None, None)
+    """
+    try:
+        # 场内价格
+        req = urllib.request.Request("https://hq.sinajs.cn/list=sh513100", headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            raw = resp.read().decode("gbk", errors="ignore")
+        parts = raw.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
+        price = float(parts[3]) if len(parts) > 3 and parts[3] else None
+        if price is None or price <= 0:
+            return None, None, None
+
+        # IOPV (基金实时估值)
+        req2 = urllib.request.Request("https://hq.sinajs.cn/list=sh513100_iopv", headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"})
+        with urllib.request.urlopen(req2, timeout=TIMEOUT) as resp2:
+            raw2 = resp2.read().decode("gbk", errors="ignore")
+        parts2 = raw2.split("=", 1)[1].strip(" \t\r\n;\"").split(",")
+        iopv = float(parts2[2]) if len(parts2) > 2 and parts2[2] else None
+        if iopv is None or iopv <= 0:
+            return None, price, None
+
+        premium = (price / iopv - 1) * 100
+        return premium, price, iopv
+    except Exception:
+        return None, None, None
+
+
+def check_nq_premium_action():
+    """根据溢价给出操作建议。
+
+    返回 dict: {premium_pct, price, iopv, suggestion, level}
+    level: 'normal'(<3%), 'high'(3-8%), 'extreme'(>8%)
+    """
+    premium, price, iopv = fetch_nq_premium()
+    if premium is None:
+        return {"available": False}
+    if premium < 3:
+        level = "normal"
+        suggestion = "溢价正常, 直接买 513100 即可"
+    elif premium < 8:
+        level = "high"
+        suggestion = f"溢价偏高, 建议买替代品 {NQ_ALT_ETFS[0]['name']} ({NQ_ALT_ETFS[0]['code']}) 或 {NQ_ALT_ETFS[1]['name']} ({NQ_ALT_ETFS[1]['code']})"
+    else:
+        level = "extreme"
+        suggestion = f"溢价过高! 建议买 {NQ_ALT_ETFS[0]['name']} ({NQ_ALT_ETFS[0]['code']}) / {NQ_ALT_ETFS[1]['name']} ({NQ_ALT_ETFS[1]['code']}), 切勿直接买 513100"
+    return {
+        "available": True,
+        "premium_pct": premium,
+        "price": price,
+        "iopv": iopv,
+        "suggestion": suggestion,
+        "level": level,
+    }
 
 
 # ============================================================
@@ -289,12 +362,22 @@ def run():
     avg_vol = sum(r["vol"] for r in valid_results) / len(valid_results)
     triggered = check_risk(avg_vol, best["vol"], best["trend"])
 
+    # 纳指溢价检查 (为切换决策提供依据)
+    premium_info = check_nq_premium_action()
+    if premium_info.get("available"):
+        print(f"[溢价] 513100 纳指ETF 溢价 {premium_info['premium_pct']:+.1f}% "
+              f"(价 {premium_info['price']:.3f} / IOPV {premium_info['iopv']:.3f})")
+        print(f"[溢价] {premium_info['suggestion']}")
+    else:
+        print("[溢价] 无法获取 IOPV, 跳过溢价提示")
+
     return {
         "results": valid_results,
         "best": best,
         "avg_vol": avg_vol,
         "triggered": triggered,
         "newest_date": newest_date,
+        "nq_premium": premium_info,
     }
 
 
@@ -339,6 +422,18 @@ def format_action(data):
                      f"vol {r['vol']*100:5.1f}%  "
                      f"趋势 {r['trend']:5.1f}")
     lines.append("")
+
+    # 纳指溢价提示
+    p_info = data.get("nq_premium", {})
+    if p_info.get("available"):
+        pct = p_info["premium_pct"]
+        if pct > 3:
+            icon = "🔴" if pct > 8 else "🟠"
+            lines.append(f"{icon} ⚠️ 513100 溢价 {pct:+.1f}%")
+            lines.append(f"   {p_info['suggestion']}")
+        else:
+            lines.append(f"🟢 513100 溢价 {pct:+.1f}%, 正常")
+        lines.append("")
 
     lines.append("⏰ 执行时间:")
     lines.append("   明日 09:30 开盘执行")
@@ -475,6 +570,41 @@ def generate_html(data):
     for i, r in enumerate(data["results"]):
         ranking_rows += ranking_row(i, r)
 
+    # 纳指溢价提示区块
+    p_info = data.get("nq_premium", {})
+    if p_info.get("available"):
+        pct = p_info["premium_pct"]
+        if pct > 8:
+            prem_bg = "background:#fef2f2;border:1px solid #fecaca;"
+            prem_color = "#dc2626"
+            prem_badge = '<span style="background:#dc2626;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">高溢价</span>'
+            prem_icon = "🔴"
+        elif pct > 3:
+            prem_bg = "background:#fffbeb;border:1px solid #fde68a;"
+            prem_color = "#b45309"
+            prem_badge = '<span style="background:#f59e0b;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">溢价偏高</span>'
+            prem_icon = "🟠"
+        else:
+            prem_bg = "background:#f0fdf4;border:1px solid #bbf7d0;"
+            prem_color = "#15803d"
+            prem_badge = '<span style="background:#10b981;color:white;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700;">溢价正常</span>'
+            prem_icon = "🟢"
+        premium_html = f'''
+        <tr><td style="padding:18px 32px 0 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="{prem_bg}border-radius:6px;">
+            <tr><td style="padding:10px 14px;">
+              <div style="font-size:12px;font-weight:700;color:{prem_color};line-height:1.3;">
+                {prem_icon} 纳指ETF(513100) 溢价 {pct:+.1f}%{prem_badge}
+              </div>
+              <div style="font-size:11px;color:{prem_color};margin-top:3px;line-height:1.5;">
+                场内价 <strong>{p_info["price"]:.3f}</strong> / IOPV <strong>{p_info["iopv"]:.3f}</strong> · {p_info["suggestion"]}
+              </div>
+            </td></tr>
+          </table>
+        </td></tr>'''
+    else:
+        premium_html = ""
+
     avg_vol_color = "#dc2626" if avg_vol > AVG_VOL_THRESHOLD else "#10b981"
     hold_vol_color = "#dc2626" if best["vol"] > HOLD_VOL_THRESHOLD_C else ("#f59e0b" if best["vol"] > HOLD_VOL_THRESHOLD_B else "#10b981")
     trend_color = "#dc2626" if best["trend"] > TREND_THRESHOLD else "#10b981"
@@ -522,6 +652,8 @@ def generate_html(data):
           {ranking_rows}
         </table>
       </td></tr>
+
+      {premium_html}
 
       <tr><td style="padding:18px 32px 0 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📈 市场状态监控</div>
@@ -852,6 +984,19 @@ def send_feishu(webhook_url, data, max_retries=3):
             score_str = f"<font color='grey'>{score_str}</font>"
         rank_lines.append(f"{medals[i]} **{r['name']}** {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
 
+    # 纳指溢价提示
+    p_info = data.get("nq_premium", {})
+    if p_info.get("available"):
+        pct = p_info["premium_pct"]
+        if pct > 8:
+            premium_md = f"🔴 **513100 溢价 {pct:+.1f}% (过高)**  \n{p_info['suggestion']}"
+        elif pct > 3:
+            premium_md = f"🟠 **513100 溢价 {pct:+.1f}% (偏高)**  \n{p_info['suggestion']}"
+        else:
+            premium_md = f"🟢 513100 溢价 {pct:+.1f}%, 正常"
+    else:
+        premium_md = None
+
     # 执行时间
     if is_risk:
         timeline_md = "**09:30** 集合竞价卖出 ETF  \n**14:30-14:50** 买 GC001/R-001 隔夜逆回购"
@@ -881,6 +1026,7 @@ def send_feishu(webhook_url, data, max_retries=3):
                 {"tag": "div", "text": {"tag": "lark_md", "content": "**📋 动量得分排名**"}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(rank_lines)}},
                 {"tag": "hr"},
+                *([] if premium_md is None else [{"tag": "div", "text": {"tag": "lark_md", "content": premium_md}}]),
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**⏰ 执行时间**\n{timeline_md}"}},
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": perf_md}},
