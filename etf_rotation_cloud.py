@@ -15,6 +15,8 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v4)
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
 
 【版本历史】
+   2026-08-06 v9: 飞书卡片风控描述优化 - 三行独立展示, 每行完整条件
+                  (原 fields 并排+缩写难读, 改为与邮件一致的全描述)
    2026-08-05 v8: 简化 - 移除纳指溢价优化逻辑, 信号是纳指直接买 513100
                   (对账结论: 含风控后买最低溢价无显著优势, 简化执行)
    2026-08-05 v7: 纳指进场日给出具体买入标的 - 查询全部12只场内纳指ETF溢价
@@ -832,18 +834,32 @@ def send_feishu(webhook_url, data, max_retries=3):
     else:
         op_line = f"**🟢 操作: 满仓持有 {best['name']} ({best['code']})**"
 
-    # 3 个风控条件
+    # 3 个风控条件 (每行完整描述, 与邮件HTML口径一致)
     risk_defs = [
-        ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
-        ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} / vol {best['vol']*100:.1f}% (阈值 95/24%)", "②" in triggered),
-        ("③", "多标的共振",     f"vol {best['vol']*100:.1f}% / 均 {avg_vol*100:.1f}% (阈值 40/30%)", "③" in triggered),
+        {
+            "id": "①", "title": "市场整体高波动",
+            "cond": f"4 标的等权平均 vol20 = **{avg_vol*100:.1f}%** (阈值 40%)",
+            "on": "①" in triggered,
+        },
+        {
+            "id": "②", "title": "个股阶段顶部",
+            "cond": (f"持有 {best['name']} 趋势线 = **{best['trend']:.1f}** (阈值 95) 且 "
+                     f"持有 vol20 = **{best['vol']*100:.1f}%** (阈值 24%)"),
+            "on": "②" in triggered,
+        },
+        {
+            "id": "③", "title": "多标的共振",
+            "cond": (f"持有 {best['name']} vol20 = **{best['vol']*100:.1f}%** (阈值 40%) 且 "
+                     f"等权平均 vol20 = **{avg_vol*100:.1f}%** (阈值 30%)"),
+            "on": "③" in triggered,
+        },
     ]
     risk_lines = []
-    for cid, title, vals, on in risk_defs:
-        if on:
-            risk_lines.append(f"<font color='red'>**🔴 {title} (触发)**</font>  \n{vals}")
+    for rd in risk_defs:
+        if rd["on"]:
+            risk_lines.append(f"<font color='red'>**🔴 {rd['id']} {rd['title']}（触发）**</font>  \n{rd['cond']}")
         else:
-            risk_lines.append(f"<font color='grey'>⚪ {title}</font>  \n{vals}")
+            risk_lines.append(f"<font color='grey'>⚪ {rd['id']} {rd['title']}（未触发）</font>  \n{rd['cond']}")
 
     # 排名
     medals = ["🥇", "🥈", "🥉", "🏳️"]
@@ -876,11 +892,9 @@ def send_feishu(webhook_url, data, max_retries=3):
                 {"tag": "div", "text": {"tag": "lark_md", "content": op_line}},
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**🛡️ 风控监测** ({len(triggered)}/3 触发)"}},
-                {"tag": "div", "fields": [
-                    {"is_short": True,  "text": {"tag": "lark_md", "content": risk_lines[0]}},
-                    {"is_short": True,  "text": {"tag": "lark_md", "content": risk_lines[1]}},
-                    {"is_short": False, "text": {"tag": "lark_md", "content": risk_lines[2]}},
-                ]},
+                {"tag": "div", "text": {"tag": "lark_md", "content": risk_lines[0]}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": risk_lines[1]}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": risk_lines[2]}},
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": "**📋 动量得分排名**"}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(rank_lines)}},
