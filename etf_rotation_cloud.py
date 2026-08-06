@@ -552,6 +552,8 @@ def generate_html(data):
         </div>
       </td></tr>
 
+      %THEO_ROW%
+
     </table>
     <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;">
       <tr><td align="center" style="font-size:10px;color:#9ca3af;padding:4px 0;">
@@ -562,6 +564,17 @@ def generate_html(data):
 </table>
 </body>
 </html>'''
+    # 理论账户行
+    theo_row = ""
+    theo = data.get('theoretical')
+    if theo:
+        theo_row = f'''
+      <tr><td style="padding:12px 32px;background:#f0fdf4;border-top:1px solid #e5e7eb;">
+        <div style="font-size:12px;font-weight:700;color:#065f46;">💰 理论账户 (2026-07-07 进场 5 万)</div>
+        <div style="font-size:18px;font-weight:700;color:#047857;margin:4px 0;">{theo['equity']:,.0f} 元 <span style="font-size:13px;color:#059669;">({theo['total_ret']*100:+.2f}%)</span></div>
+        <div style="font-size:11px;color:#6b7280;">当前持仓: {theo['hold']} · 数据至 {theo['last_date']} · 按你的费率(万0.5免5+逆回购1折)</div>
+      </td></tr>'''
+    html = html.replace('%THEO_ROW%', theo_row)
     return html
 
 
@@ -879,6 +892,13 @@ def send_feishu(webhook_url, data, max_retries=3):
         timeline_md = "**09:30** 集合竞价买入信号标的  \n持仓不动, 收盘后跑次日策略"
 
     perf_md = "📊 **历史业绩** (2014-2026, 12.5 年)  \n年化 +43.5% · 夏普 1.82 · 回撤 -20.8% · 全部年度正收益"
+    # 理论账户
+    theo = data.get('theoretical')
+    theo_md = ''
+    if theo:
+        theo_md = (f"**💰 理论账户** (7/7 进场 5 万)  \n"
+                   f"当前 **{theo['equity']:,.0f} 元** ({theo['total_ret']*100:+.2f}%) 持仓 {theo['hold']}")
+
 
     card = {
         "msg_type": "interactive",
@@ -902,6 +922,10 @@ def send_feishu(webhook_url, data, max_retries=3):
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**⏰ 执行时间**\n{timeline_md}"}},
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": perf_md}},
+            ] + ([
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": theo_md}},
+            ] if theo_md else []) + [
                 {"tag": "note", "elements": [{"tag": "plain_text",
                     "content": "信号机械执行 · 触发即清仓 · 不做主观判断"}]}
             ]
@@ -976,6 +1000,172 @@ def send_email(html_content, to_addr, from_addr, auth_code,
                 continue
             return False
     return False
+
+
+# ============================================================
+# 理论账户: 2026-07-07 进场 5 万, 无状态全量重算 (云端安全)
+# 每次从 THEO_START 拉全量历史重算到最新日, 零持久化依赖
+# ============================================================
+THEO_START = '2026-07-07'
+THEO_CAPITAL = 50000
+THEO_FEE_ETF = 0.0001      # 万0.5免5 (5万本金每笔≥5元≈0.01%)
+THEO_FEE_REPO = 0.02/250*0.1  # 逆回购1折
+
+
+def theo_fetch_full(code, market):
+    """拉全量历史日K (新浪, datalen=4000 覆盖 ETF 上市至今)
+    注: 新浪为未复权价, 2026-07-07 起算近期无分红差异可忽略
+    """
+    sym = ('sh' if market == 'sh' else 'sz') + code
+    url = (f'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/'
+           f'CN_MarketData.getKLineData?symbol={sym}&datalen=4000&scale=240&ma=no')
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
+            raw = json.loads(urllib.request.urlopen(req, timeout=25).read().decode('gbk'))
+            if not isinstance(raw, list) or len(raw) < 60:
+                continue
+            return [{'day': d['day'][:10], 'open': float(d['open']), 'close': float(d['close']),
+                     'high': float(d['high']), 'low': float(d['low'])} for d in raw]
+        except Exception:
+            if attempt < 2:
+                time.sleep(3)
+    return None
+
+
+def theo_calc_from_data(ohlc):
+    """从全量 OHLC (dict: code -> [{'day','open','close','high','low'}]) 重算理论账户
+    口径: v8 三风控 + T-1信号->T日开盘 + 信号变化才交易 + 用户费率
+    返回摘要 dict 或 None
+    """
+    import math as _m
+    codes = list(ohlc.keys())
+    # 统一交易日 (取交集)
+    dates = None
+    for c in codes:
+        ds = set(r['day'] for r in ohlc[c])
+        dates = ds if dates is None else (dates & ds)
+    if not dates:
+        return None
+    dates = sorted(dates)
+    close_m = {c: {r['day']: r['close'] for r in ohlc[c]} for c in codes}
+    open_m = {c: {r['day']: r['open'] for r in ohlc[c]} for c in codes}
+    high_m = {c: {r['day']: r['high'] for r in ohlc[c]} for c in codes}
+    low_m = {c: {r['day']: r['low'] for r in ohlc[c]} for c in codes}
+    n = len(dates)
+    # 逐日指标 (滚动计算, 纯 Python)
+    def _score(dts, closes, idx):
+        if idx < 24:
+            return 0.0
+        w = [_m.log(closes[i]) for i in range(idx-24, idx+1)]
+        if any(_m.isnan(x) or x != x for x in w) or min(w) != w:
+            pass
+        y = w; t = list(range(25))
+        n2 = 25; sx = sum(t); sy = sum(y); sxx = sum(x*x for x in t); sxy = sum(t[i]*y[i] for i in range(n2))
+        denom = n2*sxx - sx*sx
+        if denom == 0: return 0.0
+        slope = (n2*sxy - sx*sy)/denom
+        intercept = (sy - slope*sx)/n2
+        ym = sy/n2
+        ssr = sum((y[i] - (slope*t[i]+intercept))**2 for i in range(n2))
+        sst = sum((yi-ym)**2 for yi in y)
+        r2 = 1 - ssr/sst if sst > 0 else 0
+        return (_m.exp(slope*250)-1)*r2
+    def _vol20(closes, idx):
+        if idx < 20: return 0.0
+        rets = [closes[i]/closes[i-1]-1 for i in range(idx-19, idx+1)]
+        m = sum(rets)/20
+        var = sum((r-m)**2 for r in rets)/19
+        return _m.sqrt(var)*_m.sqrt(250)
+    def _trend(highs, lows, closes, idx):
+        if idx < 54: return 50.0
+        seg_h = highs[idx-54:idx+1]; seg_l = lows[idx-54:idx+1]
+        hhv = max(seg_h); llv = min(seg_l)
+        return 50.0 if hhv == llv else (closes[idx]-llv)/(hhv-llv)*100
+    def _tdx_sma(v, nn, mm):
+        out = [float('nan')]*len(v); y = float('nan')
+        for i, x in enumerate(v):
+            if x != x: out[i] = y; continue
+            if y != y: y = x
+            else: y = (x*mm + y*(nn-mm))/nn
+            out[i] = y
+        return out
+    def _trend_full(highs, lows, closes):
+        n3 = len(closes)
+        rsv = []
+        for i in range(n3):
+            if i < 54:
+                rsv.append(50.0); continue
+            hhv = max(highs[i-54:i+1]); llv = min(lows[i-54:i+1])
+            rsv.append(50.0 if hhv == llv else (closes[i]-llv)/(hhv-llv)*100)
+        sma5 = _tdx_sma(rsv, 5, 1); sma3 = _tdx_sma(sma5, 3, 1)
+        v11 = [3*sma5[i]-2*sma3[i] if (sma5[i]==sma5[i] and sma3[i]==sma3[i]) else 50.0 for i in range(n3)]
+        ema = [v11[0]]; alpha = 2/4
+        for i in range(1, n3): ema.append(alpha*v11[i] + (1-alpha)*ema[-1])
+        return ema
+
+    # 预计算每标的全序列 (趋势线需要整序列)
+    series = {}
+    for c in codes:
+        closes = [close_m[c][d] for d in dates]
+        highs = [high_m[c][d] for d in dates]
+        lows = [low_m[c][d] for d in dates]
+        trend_full = _trend_full(highs, lows, closes)
+        series[c] = {'closes': closes, 'highs': highs, 'lows': lows, 'trend': trend_full}
+
+    # 模拟
+    start_idx = next((i for i, d in enumerate(dates) if d >= THEO_START), None)
+    if start_idx is None:
+        return None
+    equity = THEO_CAPITAL
+    cur = None
+    for i in range(start_idx, n-1):
+        scores = {c: _score(dates, series[c]['closes'], i) for c in codes}
+        best = max(scores, key=scores.get)
+        avg_v = sum(_vol20(series[c]['closes'], i) for c in codes)/len(codes)
+        hold_v = _vol20(series[best]['closes'], i)
+        hold_tr = series[best]['trend'][i]
+        r1 = avg_v > 0.40
+        r2 = hold_tr > 95 and hold_v > 0.24
+        r3 = hold_v > 0.40 and avg_v > 0.30
+        if r1 or r2 or r3:
+            cost = THEO_FEE_ETF if cur is not None and cur != 'REPO' else 0
+            equity *= (1 + THEO_FEE_REPO - cost); cur = 'REPO'
+        else:
+            if cur != best:
+                cost = THEO_FEE_ETF if (cur is None or cur == 'REPO') else 2*THEO_FEE_ETF
+            else:
+                cost = 0
+            if i+2 < n:
+                px_in = open_m[best][dates[i+1]]; px_out = open_m[best][dates[i+2]]
+                r = (px_out/px_in - 1 - cost) if px_in > 0 and px_out > 0 else THEO_FEE_REPO
+            else:
+                r = THEO_FEE_REPO
+            equity *= (1 + r); cur = best
+    total_ret = equity/THEO_CAPITAL - 1
+    n_days = n - start_idx
+    years = n_days/250
+    ann = (1+total_ret)**(1/years)-1 if years > 0 else 0
+    hold_name = {'510300': '沪深300', '159915': '创业板', '513100': '纳指', '518880': '黄金'}.get(cur, '逆回购' if cur == 'REPO' else '空仓')
+    return {'start': THEO_START, 'capital': THEO_CAPITAL, 'equity': equity,
+            'total_ret': total_ret, 'ann': ann, 'n_days': n_days,
+            'last_date': dates[-1], 'hold': hold_name}
+
+
+def calc_theoretical():
+    """拉全量历史 + 重算理论账户, 云端安全无状态"""
+    try:
+        ohlc = {}
+        for e in ETF_LIST:
+            data = theo_fetch_full(e['code'], e['market'])
+            if data is None:
+                print(f'[警告] 理论账户 {e["code"]} 数据失败')
+                return None
+            ohlc[e['code']] = data
+        return theo_calc_from_data(ohlc)
+    except Exception as ex:
+        print(f'[警告] 理论账户计算失败: {ex}')
+        return None
 
 
 # ============================================================
@@ -1061,6 +1251,14 @@ def main():
     print()
     output = format_action(data)
     print(output)
+    # 理论账户 (无状态全量重算, 云端安全)
+    theo = calc_theoretical()
+    if theo:
+        theo_line = (f"💰 理论账户 (7/7进场5万): {theo['equity']:,.0f}元 "
+                     f"({theo['total_ret']*100:+.2f}%) 持仓{theo['hold']}")
+        print(theo_line)
+        data['theoretical'] = theo
+
 
     if args.feishu:
         print("\n--- 推送到飞书 ---")
