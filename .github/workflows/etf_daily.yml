@@ -19,6 +19,7 @@ jobs:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           EMAIL_TO:           ${{ secrets.EMAIL_TO }}
           EMAIL_PASSWORD:     ${{ secrets.EMAIL_PASSWORD }}
+          GLM_API_KEY:         ${{ secrets.GLM_API_KEY }}
         run: |
           python etf_rotation_cloud.py --feishu --email 2>&1 | tee /tmp/output.txt
       - name: 输出到 Summary
