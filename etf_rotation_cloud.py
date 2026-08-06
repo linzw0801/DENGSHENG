@@ -553,6 +553,7 @@ def generate_html(data):
       </td></tr>
 
       %THEO_ROW%
+      %NEWS_ROW%
 
     </table>
     <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;">
@@ -575,6 +576,28 @@ def generate_html(data):
         <div style="font-size:11px;color:#6b7280;">当前持仓: {theo['hold']} · 数据至 {theo['last_date']} · 按你的费率(万0.5免5+逆回购1折)</div>
       </td></tr>'''
     html = html.replace('%THEO_ROW%', theo_row)
+    news_row = ""
+    news = data.get('news')
+    if news and not news.get('error'):
+        sev = news.get('overall', {}).get('severity', 0)
+        t3 = news.get('three_condition', {})
+        rel = news.get('relevant_news', [])
+        lines = [f"📰 新闻判断 (风险 {sev}/5, {news.get('news_count',0)} 条快讯)"]
+        if t3.get('hit'):
+            lines.append(f"🔴 三条件命中 → 建议考虑清仓! ({t3.get('reason','')})")
+        elif rel:
+            lines.append(f"⚪ {t3.get('reason','未命中三条件')}")
+        for n in rel[:3]:
+            lines.append(f"{'🔴'*n.get('severity',0)} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
+        if not rel and not t3.get('hit'):
+            lines.append("✅ 今日无重大风险新闻, 按信号操作")
+        news_row = f'''
+      <tr><td style="padding:12px 32px;background:#fffbeb;border-top:1px solid #e5e7eb;">
+        <div style="font-size:12px;font-weight:700;color:#92400e;">📰 新闻判断</div>
+        <div style="font-size:11px;color:#78350f;line-height:1.6;margin-top:4px;">{chr(10).join(lines)}</div>
+      </td></tr>'''
+    html = html.replace('%NEWS_ROW%', news_row)
+
     return html
 
 
@@ -899,6 +922,25 @@ def send_feishu(webhook_url, data, max_retries=3):
         theo_md = (f"**💰 理论账户** (7/7 进场 5 万)  \n"
                    f"当前 **{theo['equity']:,.0f} 元** ({theo['total_ret']*100:+.2f}%) 持仓 {theo['hold']}")
 
+    # 新闻判断
+    news = data.get('news')
+    news_md = ''
+    if news and not news.get('error'):
+        sev = news.get('overall', {}).get('severity', 0)
+        t3 = news.get('three_condition', {})
+        rel = news.get('relevant_news', [])
+        lines = [f"📰 **新闻判断** (风险 {sev}/5, 共 {news.get('news_count',0)} 条快讯)"]
+        if t3.get('hit'):
+            lines.append(f"🔴 **三条件命中 → 建议考虑清仓!**  \n{t3.get('reason','')}")
+        elif rel:
+            lines.append(f"⚪ {t3.get('reason','未命中三条件')}")
+        for n in rel[:3]:
+            sev_icon = '🔴' * n.get('severity', 0)
+            lines.append(f"{sev_icon} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
+        if not rel and not t3.get('hit'):
+            lines.append("✅ 今日无重大风险新闻, 按信号操作")
+        news_md = '\n'.join(lines)
+
 
     card = {
         "msg_type": "interactive",
@@ -925,7 +967,10 @@ def send_feishu(webhook_url, data, max_retries=3):
             ] + ([
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": theo_md}},
-            ] if theo_md else []) + [
+            ] if theo_md else []) + ([
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": news_md}},
+            ] if news_md else []) + [
                 {"tag": "note", "elements": [{"tag": "plain_text",
                     "content": "信号机械执行 · 触发即清仓 · 不做主观判断"}]}
             ]
@@ -1168,6 +1213,133 @@ def calc_theoretical():
         return None
 
 
+
+# ============================================================
+# 新闻判断模块 (抓快讯 + GLM分析 + 三条件清仓规则)
+# 依赖: GLM_API_KEY 环境变量 (智谱免费API)
+# ============================================================
+NEWS_DIRECTIONS = {
+    1: '杠杆/流动性收紧', 2: '利率预期反转', 3: '地缘冲突/战争',
+    4: '单一资产泡沫破裂', 5: '政策突变/监管', 6: '疫情/黑天鹅',
+}
+
+def news_fetch(n=12):
+    """抓东财 + 新浪 7x24 快讯"""
+    items = []
+    try:
+        url = ('https://np-listapi.eastmoney.com/comm/web/getNewsByColumns'
+               '?client=web&biz=web_724&column=345&order=1&needInteractData=0'
+               f'&page_index=1&page_size={n}&req_trace=etf_news'
+               '&fields=code,showTime,title,summary,mediaName,url')
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.eastmoney.com/'})
+        r = json.loads(urllib.request.urlopen(req, timeout=15).read().decode('utf-8'))
+        for it in r.get('data', {}).get('list', []):
+            t = (it.get('title', '') or '') + ' ' + (it.get('summary', '') or '')
+            if t.strip():
+                items.append({'time': it.get('showTime', '')[:16], 'text': t.strip()[:300], 'src': '东财'})
+    except Exception:
+        pass
+    try:
+        url = f'https://zhibo.sina.com.cn/api/zhibo/feed?page=1&page_size={n}&zhibo_id=152&tag_id=0&dire=f&dpc=1&type=0'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
+        r = json.loads(urllib.request.urlopen(req, timeout=15).read().decode('utf-8'))
+        feed = r.get('result', {}).get('data', {}).get('feed', {}).get('list', [])
+        for it in feed:
+            t = re.sub(r'<[^>]+>', ' ', it.get('rich_text', '') or '').strip()
+            if t:
+                items.append({'time': it.get('create_time', '')[:16], 'text': t[:300], 'src': '新浪'})
+    except Exception:
+        pass
+    # 去重
+    seen, uniq = set(), []
+    for it in items:
+        k = it['text'][:40]
+        if k not in seen:
+            seen.add(k); uniq.append(it)
+    return uniq
+
+def news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig):
+    """GLM 分析新闻性质 + 三条件清仓规则
+    返回 dict: {relevant_news, overall, three_condition}
+    """
+    key = os.environ.get('GLM_API_KEY', '')
+    result = {'relevant_news': [], 'overall': {'severity': 0, 'direction': '无', 'summary': '', 'advice': ''},
+              'three_condition': {'hit': False, 'reason': ''}}
+    if not key:
+        result['three_condition']['reason'] = '未设置 GLM_API_KEY, 跳过新闻判断'
+        return result
+    if not news_text.strip():
+        result['three_condition']['reason'] = '无新闻'
+        return result
+
+    system = """你是ETF动量轮动策略的新闻风控助手。从财经快讯中识别【真正可能影响4个持仓标的】的重大新闻，输出JSON。
+【标的映射】黄金: 美联储/美元/美债/贵金属/地缘/通胀; 纳指: 美股/科技/AI/美联储/半导体; 创业板: A股/科技成长/新能源; 沪深300: A股大盘/宏观/政策。
+【6大方向】1=杠杆/流动性收紧 2=利率预期反转 3=地缘冲突 4=单一资产泡沫破裂 5=政策突变/监管 6=疫情/黑天鹅。
+【忽略】单只个股新闻、普通行业动态、与4标的无关琐事。
+只输出JSON: {"relevant_news":[{"text":"30字内","direction":1-6或null,"direction_name":"","impact":"利多/利空/中性","target":"受影响标的","severity":1-5}],"overall":{"direction":"主要风险方向","severity":1-5,"summary":"一句话","advice":"建议"}}"""
+    user = (f"当前持仓:{hold_name} 风控:{'触发' if risk_trig else '未触发'} 持仓vol20:{hold_vol*100:.0f}%\n"
+            f"今日快讯:\n{news_text}\n请分析,只输出JSON。")
+    try:
+        payload = json.dumps({'model': 'glm-4-flash',
+                              'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
+                              'temperature': 0.2, 'max_tokens': 1200}).encode()
+        req = urllib.request.Request('https://open.bigmodel.cn/api/paas/v4/chat/completions',
+                                     data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
+        r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))
+        content = r.get('choices', [{}])[0].get('message', {}).get('content', '')
+        m = re.search(r'\{.*\}', content, re.DOTALL)
+        if m:
+            parsed = json.loads(m.group(0))
+            result['relevant_news'] = parsed.get('relevant_news', [])
+            result['overall'] = parsed.get('overall', result['overall'])
+    except Exception as e:
+        result['three_condition']['reason'] = f'GLM调用失败: {str(e)[:60]}'
+        return result
+
+    # 三条件清仓规则 (历史验证: 年化+1.05pp)
+    main_dir = None
+    for n in result['relevant_news']:
+        if n.get('direction'):
+            main_dir = n['direction']; break
+    if main_dir is None and result['overall'].get('direction'):
+        for k, v in NEWS_DIRECTIONS.items():
+            if v.split('/')[0] in str(result['overall'].get('direction', '')) or k == 1 and '杠杆' in str(result['overall'].get('direction', '')):
+                main_dir = k; break
+    risk_on = risk_trig
+    cond1 = main_dir in (1, 5)
+    cond2 = hold_code in ('159915', '510300')
+    cond3 = hold_vol is not None and hold_vol > 0.25
+    if not risk_on and cond1 and cond2 and cond3:
+        result['three_condition'] = {'hit': True, 'reason': '命中三条件(流动性/A股利空+持仓高波动A股+vol>25%), 建议考虑清仓'}
+    else:
+        reason = []
+        if risk_on: reason.append('风控已触发')
+        if not cond1: reason.append('非流动性/A股利空')
+        if not cond2: reason.append('持仓非创业板/沪深300')
+        if not cond3: reason.append('持仓vol≤25%')
+        result['three_condition'] = {'hit': False, 'reason': '未命中三条件, 不因新闻清仓' + ('(' + ','.join(reason) + ')' if reason else '')}
+    return result
+
+def run_news_analysis(data):
+    """在 run() 数据基础上执行新闻判断, 返回注入 data['news'] 的 dict"""
+    try:
+        best = data.get('best', {})
+        hold_name = best.get('name', '')
+        hold_code = best.get('code', '')
+        hold_vol = best.get('vol')
+        risk_trig = len(data.get('triggered', [])) > 0
+        news_items = news_fetch(12)
+        if not news_items:
+            return {'error': '无新闻'}
+        news_text = '\n'.join([f"[{n['time']}] {n['text']}" for n in news_items])
+        analysis = news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig)
+        analysis['hold'] = hold_name
+        analysis['news_count'] = len(news_items)
+        return analysis
+    except Exception as e:
+        return {'error': str(e)[:80]}
+
+
 # ============================================================
 # 主入口
 # ============================================================
@@ -1258,6 +1430,17 @@ def main():
                      f"({theo['total_ret']*100:+.2f}%) 持仓{theo['hold']}")
         print(theo_line)
         data['theoretical'] = theo
+
+    # 新闻判断 (GLM 分析 + 三条件)
+    print("\n--- 新闻判断 ---")
+    news = run_news_analysis(data)
+    if news and not news.get('error'):
+        sev = news.get('overall', {}).get('severity', 0)
+        hit = news.get('three_condition', {}).get('hit', False)
+        print(f"  新闻{news.get('news_count',0)}条, 风险{sev}/5, 三条件{'命中' if hit else '未命中'}")
+        data['news'] = news
+    else:
+        print(f"  新闻判断跳过: {news.get('error','') if news else '无数据'}")
 
 
     if args.feishu:
