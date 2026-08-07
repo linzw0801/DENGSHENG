@@ -556,9 +556,9 @@ def generate_html(data):
         </table>
       </td></tr>
 
+      %CHART_ROW%
       %THEO_ROW%
       %NEWS_ROW%
-      %CHART_ROW%
 
     </table>
     <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;">
@@ -848,13 +848,15 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
     chart_section = ""
     if chart_trend_b64:
         chart_section += f'''
+      <tr><td style="padding:0 32px;border-top:1px solid #e5e7eb;">&nbsp;</td></tr>
       <tr><td style="padding:18px 32px 12px 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📈 动量得分</div>
         <img src="data:image/png;base64,{chart_trend_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
       </td></tr>'''
     if chart_mini_b64:
         chart_section += f'''
-      <tr><td style="padding:0 32px 14px 32px;">
+      <tr><td style="padding:0 32px;border-top:1px solid #e5e7eb;">&nbsp;</td></tr>
+      <tr><td style="padding:18px 32px 18px 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📊 ETF走势</div>
         <img src="data:image/png;base64,{chart_mini_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
       </td></tr>'''
