@@ -67,6 +67,9 @@ AVG_VOL_THRESHOLD_C = 0.30
 # 触发后清仓转逆回购 + 冷却3交易日 (与 news_advisor 三条件互补, 覆盖纳指隔夜黑天鹅)
 GAP_TRIGGER_ASSET = "513100"
 GAP_TRIGGER_PCT = 0.05
+# 风控④ 开关: 经回测验证在4标轮动中无效(10次跳空仅3次持仓纳指, 跳空后5日80%反弹, 年化0差异)
+# 默认禁用 (workflow env DISABLE_RISK4=1); 若想启用设为 0
+DISABLE_RISK4 = os.environ.get('DISABLE_RISK4', '1') == '1' if 'DISABLE_RISK4' in os.environ else True
 
 
 # ============================================================
@@ -264,7 +267,8 @@ def check_risk(avg_vol, hold_vol, hold_trend, best_code=None, best_open=None, be
     if hold_vol > HOLD_VOL_THRESHOLD_C and avg_vol > AVG_VOL_THRESHOLD_C:
         triggered.append("③")
     # ④ 纳指单日跳空清仓: 信号/持仓为纳指 且 当日开盘较昨收跳空≤-5% → 清仓
-    if best_code == GAP_TRIGGER_ASSET and best_open is not None and best_prev_close:
+    # (已通过 DISABLE_RISK4 默认禁用: 回测验证无效)
+    if not DISABLE_RISK4 and best_code == GAP_TRIGGER_ASSET and best_open is not None and best_prev_close:
         if best_open / best_prev_close - 1 <= -GAP_TRIGGER_PCT:
             triggered.append("④")
     return triggered
@@ -298,6 +302,7 @@ def run():
             "price": closes[-1], "valid": True, "date": last,
             "open": raw[-1]["open"],
             "prev_close": raw[-2]["close"] if len(raw) >= 2 else None,
+            "chg_pct": (closes[-1] / raw[-2]["close"] - 1) * 100 if len(raw) >= 2 and raw[-2]["close"] > 0 else None,
         })
 
     valid_results = [r for r in results if r.get("valid", False)]
@@ -1223,7 +1228,7 @@ def theo_calc_from_data(ohlc):
         r3 = hold_v > 0.40 and avg_v > 0.30
         # ④ 纳指单日跳空清仓: 持仓纳指 且 次日开盘较今日收盘跳空≤-5% → 清仓, 冷却3交易日
         gap_fire = False
-        if cur == GAP_TRIGGER_ASSET and i+1 < n:
+        if not DISABLE_RISK4 and cur == GAP_TRIGGER_ASSET and i+1 < n:
             op = open_m[GAP_TRIGGER_ASSET].get(dates[i+1])
             pc = close_m[GAP_TRIGGER_ASSET].get(dates[i])
             if op and pc and pc > 0 and op / pc - 1 <= -GAP_TRIGGER_PCT:
@@ -1382,6 +1387,58 @@ def news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig):
         result['three_condition'] = {'hit': False, 'reason': '未命中三条件, 不因新闻清仓' + ('(' + ','.join(reason) + ')' if reason else '')}
     return result
 
+
+def news_market_summary(data):
+    """用 GLM 生成今日盘面总结 (基于 4 标的当日涨跌 + 动量排名 + 均vol)"""
+    key = os.environ.get('GLM_API_KEY', '')
+    if not key:
+        return ''
+    try:
+        results = data.get('results', [])
+        valid = [r for r in results if r.get('valid')]
+        if not valid:
+            return ''
+        # 按动量排序的标的涨跌
+        ranked = sorted(valid, key=lambda r: r['score'], reverse=True)
+        lines = []
+        for i, r in enumerate(ranked):
+            chg = r.get('chg_pct')
+            chg_s = f"{chg:+.1f}%" if chg is not None else "?"
+            lines.append(f"{i+1}.{r['name']} 涨跌{chg_s} 动量{r['score']:+.3f} vol{r['vol']*100:.0f}%")
+        market_info = '; '.join(lines)
+        avg_v = data.get('avg_vol')
+        risk = ', '.join(data.get('triggered', [])) or '无'
+        # 今日日期作为随机种子, 让每天鼓励话术不同
+        today_str = datetime.now(CN_TZ).strftime("%Y-%m-%d")
+        seed = sum(ord(c) for c in today_str)
+        # 3 种导师风格, 每天按日期切换 (seed % 3), 措辞由 GLM 即兴生成
+        mentor_styles = [
+            "像一位沉稳的教练: 先客观点评盘面, 再用一句话鼓励坚持纪律, 强调'信号至上、不因一时涨跌动摇'",
+            "像一位温暖的导师: 先总结今日盘面, 再温柔提醒'策略陪了你12年, 纪律是最大的护城河', 鼓励执行",
+            "像一位睿智的老朋友: 先聊今日盘面, 再坚定鼓励'你不需要预测, 只需要执行', 强调长期主义",
+        ]
+        mentor_style = mentor_styles[seed % 3]
+        system_mentor = (
+            "你是用户的量化交易人生导师。你的任务: 结合今日盘面数据, "
+            "既客观总结市场特征, 又以人生导师的口吻鼓励用户坚持ETF动量轮动策略的执行纪律。"
+            "要求: ①盘面总结2句话(谁强谁弱/情绪) ②鼓励1-2句话, 措辞温暖有力不油腻 ③总字数60-100字 \n"
+            "④不预测明天走势 ⑤鼓励话术必须贴合当天盘面(比如黄金领涨就夸'跟对了趋势'之类), 不要每句都一样"
+        )
+        prompt = (f"今日({today_str})盘面数据: 排名及表现 {market_info}; "
+                  f"等权均vol {(avg_v*100 if avg_v else 0):.0f}%; 风控触发 {risk}\n"
+                  f"请以「{mentor_style}」的口吻输出。")
+        payload = json.dumps({'model': 'glm-4-flash',
+                              'messages': [{'role': 'system', 'content': system_mentor},
+                                           {'role': 'user', 'content': prompt}],
+                              'temperature': 0.9, 'max_tokens': 300}).encode()
+        req = urllib.request.Request('https://open.bigmodel.cn/api/paas/v4/chat/completions',
+                                     data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
+        r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))
+        return r.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+    except Exception as e:
+        return f'(盘面总结生成失败: {str(e)[:40]})'
+
+
 def run_news_analysis(data):
     """在 run() 数据基础上执行新闻判断, 返回注入 data['news'] 的 dict"""
     try:
@@ -1397,6 +1454,8 @@ def run_news_analysis(data):
         analysis = news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig)
         analysis['hold'] = hold_name
         analysis['news_count'] = len(news_items)
+        # 今日盘面总结
+        analysis['market_summary'] = news_market_summary(data)
         return analysis
     except Exception as e:
         return {'error': str(e)[:80]}
