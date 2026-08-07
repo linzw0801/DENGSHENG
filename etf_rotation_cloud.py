@@ -576,7 +576,7 @@ def generate_html(data):
     if theo:
         theo_row = f'''
       <tr><td style="padding:12px 32px;background:#f0fdf4;border-top:1px solid #e5e7eb;">
-        <div style="font-size:12px;font-weight:700;color:#065f46;">💰 理论账户 (2026-07-07 进场 5 万)</div>
+        <div style="font-size:12px;font-weight:700;color:#065f46;">💰 理论账户</div>
         <div style="font-size:18px;font-weight:700;color:#047857;margin:4px 0;">{theo['equity']:,.0f} 元 <span style="font-size:13px;color:#059669;">({theo['total_ret']*100:+.2f}%)</span></div>
         <div style="font-size:11px;color:#6b7280;">当前持仓: {theo['hold']} · 数据至 {theo['last_date']} · 按你的费率(万0.5免5+逆回购1折)</div>
       </td></tr>'''
@@ -596,7 +596,7 @@ def generate_html(data):
         <div style="font-size:11px;color:#065f46;line-height:1.6;margin-top:4px;">{mkt}</div>
       </td></tr>'''
         fail = 'GLM分析超时' in str(t3.get('reason', '')) or 'GLM调用失败' in str(t3.get('reason', ''))
-        lines = [f"📰 新闻判断 (风险 {sev}/5)"]
+        lines = [f"📰 新闻判断"]
         if fail:
             lines.append(f"⚠️ {t3.get('reason','新闻分析不可用')}, 按纯量化执行")
         else:
@@ -934,7 +934,7 @@ def send_feishu(webhook_url, data, max_retries=3):
     theo = data.get('theoretical')
     theo_md = ''
     if theo:
-        theo_md = (f"**💰 理论账户** (7/7 进场 5 万)  \n"
+        theo_md = (f"**💰 理论账户**  \n"
                    f"当前 **{theo['equity']:,.0f} 元** ({theo['total_ret']*100:+.2f}%) 持仓 {theo['hold']}")
 
     # 新闻判断
@@ -951,7 +951,7 @@ def send_feishu(webhook_url, data, max_retries=3):
         mkt = news.get('market_summary', '')
         if mkt and not mkt.startswith('('):
             market_md = f"💬 **今日盘面**\n{mkt}"
-        lines.append(f"📰 **新闻判断** (风险 {sev}/5)")
+        lines.append(f"📰 **新闻判断**")
         if fail:
             lines.append(f"⚠️ {t3.get('reason','新闻分析不可用')}, 按纯量化执行")
         else:
