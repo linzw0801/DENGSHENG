@@ -598,13 +598,13 @@ def generate_html(data):
         lines = [f"📰 新闻判断 (风险 {sev}/5)"]
         if fail:
             lines.append(f"⚠️ {t3.get('reason','新闻分析不可用')}, 按纯量化执行")
-        elif t3.get('hit'):
-            lines.append(f"🔴 三条件命中 → 建议考虑清仓! ({t3.get('reason','')})")
-        elif rel:
-            lines.append(f"⚪ {t3.get('reason','未命中三条件, 不因新闻清仓')}")
+        else:
+            advice = news.get('overall', {}).get('advice', '')
+            if advice:
+                lines.append(f"💡 {advice[:80]}")
         for n in rel[:3]:
-            sev_icon = news_sev_icon(n.get('severity', 0))
-            lines.append(f"{sev_icon} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
+            sev_icon = news_sev_icon(n.get('severity', 0), n.get('impact', ''))
+            lines.append(f"{sev_icon} {n.get('text','')[:40]}")
         if not rel and not t3.get('hit') and not fail:
             lines.append("✅ 今日无重大风险新闻, 按信号操作")
         # lines[0] 已是 "📰 新闻判断 (风险 X/5)", 不再加重复标题; 用 <br> 一行一个
@@ -858,8 +858,8 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
         <img src="data:image/png;base64,{chart_mini_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
       </td></tr>'''
 
-    # 在历史业绩段落前插入图表
-    insert_marker = '<tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">'
+    # 在理论账户占位符前插入图表 (原指向历史业绩段落, 已删除; 改为固定锚点)
+    insert_marker = '%NEWS_ROW%'
     if insert_marker in html_content:
         return html_content.replace(insert_marker, chart_section + insert_marker, 1)
     else:
@@ -946,21 +946,22 @@ def send_feishu(webhook_url, data, max_retries=3):
         rel = news.get('relevant_news', [])
         fail = 'GLM分析超时' in str(t3.get('reason', '')) or 'GLM调用失败' in str(t3.get('reason', ''))
         lines = []
-        # 盘面总结 (简单客观)
+        # 盘面总结单独放 market_md (与新闻判断分开, 中间加分割线)
+        market_md = ''
         mkt = news.get('market_summary', '')
         if mkt and not mkt.startswith('('):
-            lines.append(f"💬 **今日盘面**\n{mkt}")
+            market_md = f"💬 **今日盘面**\n{mkt}"
         lines.append(f"📰 **新闻判断** (风险 {sev}/5)")
         if fail:
             lines.append(f"⚠️ {t3.get('reason','新闻分析不可用')}, 按纯量化执行")
-        elif t3.get('hit'):
-            lines.append(f"🔴 **三条件命中 → 建议考虑清仓!**  \n{t3.get('reason','')}")
-        elif rel:
-            lines.append(f"⚪ {t3.get('reason','未命中三条件, 不因新闻清仓')}")
+        else:
+            advice = news.get('overall', {}).get('advice', '')
+            if advice:
+                lines.append(f"💡 {advice[:80]}")
         for n in rel[:3]:
-            sev_icon = news_sev_icon(n.get('severity', 0))
-            lines.append(f"{sev_icon} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
-        if not rel and not t3.get('hit') and not fail:
+            sev_icon = news_sev_icon(n.get('severity', 0), n.get('impact', ''))
+            lines.append(f"{sev_icon} {n.get('text','')[:40]}")
+        if not rel and not fail:
             lines.append("✅ 今日无重大风险新闻, 按信号操作")
         news_md = '\n'.join(lines)
 
@@ -983,15 +984,15 @@ def send_feishu(webhook_url, data, max_retries=3):
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": "**📋 动量得分排名**"}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(rank_lines)}},
-                {"tag": "hr"},
-
             ] + ([
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": theo_md}},
             ] if theo_md else []) + ([
                 {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": market_md}},
+                {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": news_md}},
-            ] if news_md else []) + [
+            ] if (market_md or news_md) else []) + [
                 {"tag": "note", "elements": [{"tag": "plain_text",
                     "content": "信号机械执行 · 触发即清仓 · 不做主观判断"}]}
             ]
@@ -1242,8 +1243,12 @@ def calc_theoretical():
 # 依赖: GLM_API_KEY 环境变量 (智谱免费API)
 # ============================================================
 
-def news_sev_icon(severity):
-    """严重度 → 颜色图标: 1-2低=🟢 3中=🟠 4-5高=🔴"""
+def news_sev_icon(severity, impact=''):
+    """新闻图标: 利多=🟢 中性=⚪ 利空按严重度(3=🟠 4-5=🔴)"""
+    if impact == '利多':
+        return '🟢'
+    if impact == '中性':
+        return '⚪'
     s = int(severity or 0)
     if s >= 4:
         return '🔴'
