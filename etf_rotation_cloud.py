@@ -13,12 +13,9 @@ ETF 轮动选股器 — 云端版 (B+C+ 并集方案 v4)
    ① 4 标的等权平均 vol20 > 40%
    ② 持有标的趋势线 > 95 且 持有标的 vol20 > 24%
    ③ 持有标的 vol20 > 40% 且 等权平均 vol20 > 30%
-   ④ 信号/持仓为纳指 且 纳指当日开盘较昨收跳空 ≤ -5% (纳指隔夜黑天鹅清仓)
-
 【版本历史】
    2026-08-06 v9: 飞书卡片风控描述优化 - 三行独立展示, 每行完整条件
-   2026-08-06 v10: 新增风控条件④ 纳指单日跳空清仓 (开盘较昨收≤-5%→清仓+冷却3日), 仅纳指
-                  (原 fields 并排+缩写难读, 改为与邮件一致的全描述)
+   2026-08-06 v10: 新增风控条件④                   (原 fields 并排+缩写难读, 改为与邮件一致的全描述)
    2026-08-05 v8: 简化 - 移除纳指溢价优化逻辑, 信号是纳指直接买 513100
                   (对账结论: 含风控后买最低溢价无显著优势, 简化执行)
    2026-08-05 v7: 纳指进场日给出具体买入标的 - 查询全部12只场内纳指ETF溢价
@@ -62,14 +59,7 @@ HOLD_VOL_THRESHOLD_B = 0.24
 HOLD_VOL_THRESHOLD_C = 0.40
 AVG_VOL_THRESHOLD_C = 0.30
 
-# ④ 纳指单日跳空清仓 (历史回测 2014-2026: 纳指-only 版 年化+49.6%/Sharpe1.91, 远优于全资产版)
-# 仅纳指: 纳指跳空后隔夜惯性续跌概率高; 黄金跳空多为一过性新闻(假摔), 故不纳入。
-# 触发后清仓转逆回购 + 冷却3交易日 (与 news_advisor 三条件互补, 覆盖纳指隔夜黑天鹅)
-GAP_TRIGGER_ASSET = "513100"
-GAP_TRIGGER_PCT = 0.05
-# 风控④ 开关: 经回测验证在4标轮动中无效(10次跳空仅3次持仓纳指, 跳空后5日80%反弹, 年化0差异)
-# 默认禁用 (workflow env DISABLE_RISK4=1); 若想启用设为 0
-DISABLE_RISK4 = os.environ.get('DISABLE_RISK4', '1') == '1' if 'DISABLE_RISK4' in os.environ else True
+
 
 
 # ============================================================
@@ -266,11 +256,7 @@ def check_risk(avg_vol, hold_vol, hold_trend, best_code=None, best_open=None, be
         triggered.append("②")
     if hold_vol > HOLD_VOL_THRESHOLD_C and avg_vol > AVG_VOL_THRESHOLD_C:
         triggered.append("③")
-    # ④ 纳指单日跳空清仓: 信号/持仓为纳指 且 当日开盘较昨收跳空≤-5% → 清仓
-    # (已通过 DISABLE_RISK4 默认禁用: 回测验证无效)
-    if not DISABLE_RISK4 and best_code == GAP_TRIGGER_ASSET and best_open is not None and best_prev_close:
-        if best_open / best_prev_close - 1 <= -GAP_TRIGGER_PCT:
-            triggered.append("④")
+
     return triggered
 
 
@@ -355,15 +341,11 @@ def format_action(data):
         lines.append(f"🟢 操作: 满仓持有 {best['name']} ({best['code']})")
     lines.append("")
 
-    lines.append(f"🛡️ 风控监测 ({len(triggered)}/4 触发):")
-    nq = next((r for r in data["results"] if r["code"] == "513100"), None)
-    nq_gap = (nq["open"] / nq["prev_close"] - 1) if (nq and nq.get("open") is not None and nq.get("prev_close")) else None
-    nq_txt = f"{nq_gap*100:+.1f}%" if nq_gap is not None else "数据缺失"
+    lines.append(f"🛡️ 风控监测 ({len(triggered)}/3 触发):")
     all_conditions = [
         ("①", "市场整体高波动", f"均 vol20 = {avg_vol*100:.1f}% (阈值 40%)", "①" in triggered),
         ("②", "个股阶段顶部",   f"趋势 {best['trend']:.1f} (阈值 95), 持有 vol {best['vol']*100:.1f}% (阈值 24%)", "②" in triggered),
         ("③", "多标的共振",     f"持有 vol {best['vol']*100:.1f}% (阈值 40), 均 vol {avg_vol*100:.1f}% (阈值 30%)", "③" in triggered),
-        ("④", "纳指单日跳空",   f"纳指开盘跳空 {nq_txt} (阈值 -5%)", "④" in triggered),
     ]
     for cid, title, detail, on in all_conditions:
         icon = "🔴" if on else "⚪"
@@ -467,12 +449,6 @@ def generate_html(data):
         action_title = f"🟢 满仓持有 {best['name']} ({best['code']})"
 
     triggered_ids = set(triggered)
-    nasdaq_res = next((r for r in data["results"] if r["code"] == "513100"), None)
-    nq_gap = None
-    if nasdaq_res and nasdaq_res.get("open") is not None and nasdaq_res.get("prev_close"):
-        nq_gap = nasdaq_res["open"] / nasdaq_res["prev_close"] - 1
-    nq_detail = (f"纳指开盘跳空 = <strong>{nq_gap*100:+.1f}%</strong>, 阈值 -5%"
-                 if nq_gap is not None else "纳指开盘数据缺失")
     risk_defs = [
         {"id": "①", "title": "市场整体高波动", "subtitle": "等权平均 vol20 > 40%",
          "detail": f"4 标的等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong>, 阈值 40%"},
@@ -480,8 +456,6 @@ def generate_html(data):
          "detail": f"持有 <strong>{best['name']}</strong> 趋势线 = <strong>{best['trend']:.1f}</strong> (阈值 95), 持有 vol20 = <strong>{best['vol']*100:.1f}%</strong> (阈值 24%)"},
         {"id": "③", "title": "多标的共振", "subtitle": "持有 vol20 > 40% 且 等权平均 vol20 > 30%",
          "detail": f"持有 <strong>{best['name']}</strong> vol20 = <strong>{best['vol']*100:.1f}%</strong> (阈值 40%), 等权平均 vol20 = <strong>{avg_vol*100:.1f}%</strong> (阈值 30%)"},
-        {"id": "④", "title": "纳指单日跳空清仓", "subtitle": "信号/持仓为纳指 且 开盘跳空≤-5%",
-         "detail": nq_detail},
     ]
 
     risk_cards = ""
@@ -515,7 +489,7 @@ def generate_html(data):
 
     risk_html = f'''
     <tr><td style="padding:18px 32px 0 32px;">
-      <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">🛡️ 风控监测 <span style="font-size:12px;color:#dc2626;font-weight:700;background:#fef2f2;padding:2px 8px;border-radius:8px;margin-left:6px;">{len(triggered_ids)}/4 触发</span></div>
+      <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">🛡️ 风控监测 <span style="font-size:12px;color:#dc2626;font-weight:700;background:#fef2f2;padding:2px 8px;border-radius:8px;margin-left:6px;">{len(triggered_ids)}/3 触发</span></div>
       {risk_cards}
     </td></tr>'''
 
@@ -580,18 +554,6 @@ def generate_html(data):
             <td width="33.33%" valign="top" style="padding-left:4px;">{trend_card}</td>
           </tr>
         </table>
-      </td></tr>
-
-      <tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
-        <div style="font-size:11px;color:#6b7280;line-height:1.7;">
-          <strong style="color:#374151;">📊 历史业绩</strong> (2014-2026, 12.5 年)<br>
-          年化 <strong style="color:#1e3a8a;">+43.5%</strong> · 夏普 <strong>1.82</strong> · 最大回撤 <strong style="color:#dc2626;">-20.8%</strong> · Calmar <strong>2.09</strong> · 年均清仓 <strong>22 天</strong><br>
-          <br>
-          <strong style="color:#b45309;">⚠️ 纪律</strong><br>
-          • 信号机械执行,不做主观判断<br>
-          • 触发即清仓,风控消失再进场<br>
-          • 12.5 年回测全部正收益,但历史不代表未来
-        </div>
       </td></tr>
 
       %THEO_ROW%
@@ -930,7 +892,6 @@ def send_feishu(webhook_url, data, max_retries=3):
     nq_gap = None
     if nasdaq_res and nasdaq_res.get("open") is not None and nasdaq_res.get("prev_close"):
         nq_gap = nasdaq_res["open"] / nasdaq_res["prev_close"] - 1
-    nq_txt = f"{nq_gap*100:+.1f}%" if nq_gap is not None else "数据缺失"
     risk_defs = [
         {
             "id": "①", "title": "市场整体高波动",
@@ -948,11 +909,6 @@ def send_feishu(webhook_url, data, max_retries=3):
             "cond": (f"持有 {best['name']} vol20 = **{best['vol']*100:.1f}%** (阈值 40%) 且 "
                      f"等权平均 vol20 = **{avg_vol*100:.1f}%** (阈值 30%)"),
             "on": "③" in triggered,
-        },
-        {
-            "id": "④", "title": "纳指单日跳空清仓",
-            "cond": f"纳指开盘跳空 = **{nq_txt}** (阈值 -5%), 信号/持仓为纳指时触发",
-            "on": "④" in triggered,
         },
     ]
     risk_lines = []
@@ -974,12 +930,6 @@ def send_feishu(webhook_url, data, max_retries=3):
         rank_lines.append(f"{medals[i]} **{r['name']}** {score_str} vol {r['vol']*100:.1f}% 趋势 {r['trend']:.1f}")
 
     # 执行时间
-    if is_risk:
-        timeline_md = "**09:30** 集合竞价卖出 ETF  \n**14:30-14:50** 买 GC001/R-001 隔夜逆回购"
-    else:
-        timeline_md = "**09:30** 集合竞价买入信号标的  \n持仓不动, 收盘后跑次日策略"
-
-    perf_md = "📊 **历史业绩** (2014-2026, 12.5 年)  \n年化 +43.5% · 夏普 1.82 · 回撤 -20.8% · 全部年度正收益"
     # 理论账户
     theo = data.get('theoretical')
     theo_md = ''
@@ -1026,7 +976,7 @@ def send_feishu(webhook_url, data, max_retries=3):
             "elements": [
                 {"tag": "div", "text": {"tag": "lark_md", "content": op_line}},
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"**🛡️ 风控监测** ({len(triggered)}/4 触发)"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**🛡️ 风控监测** ({len(triggered)}/3 触发)"}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": risk_lines[0]}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": risk_lines[1]}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": risk_lines[2]}},
@@ -1034,9 +984,7 @@ def send_feishu(webhook_url, data, max_retries=3):
                 {"tag": "div", "text": {"tag": "lark_md", "content": "**📋 动量得分排名**"}},
                 {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(rank_lines)}},
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"**⏰ 执行时间**\n{timeline_md}"}},
-                {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": perf_md}},
+
             ] + ([
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": theo_md}},
@@ -1237,7 +1185,6 @@ def theo_calc_from_data(ohlc):
         return None
     equity = THEO_CAPITAL
     cur = None
-    cooldown_until = -1
     for i in range(start_idx, n-1):
         scores = {c: _score(dates, series[c]['closes'], i) for c in codes}
         best = max(scores, key=scores.get)
@@ -1247,23 +1194,11 @@ def theo_calc_from_data(ohlc):
         r1 = avg_v > 0.40
         r2 = hold_tr > 95 and hold_v > 0.24
         r3 = hold_v > 0.40 and avg_v > 0.30
-        # ④ 纳指单日跳空清仓: 持仓纳指 且 次日开盘较今日收盘跳空≤-5% → 清仓, 冷却3交易日
-        gap_fire = False
-        if not DISABLE_RISK4 and cur == GAP_TRIGGER_ASSET and i+1 < n:
-            op = open_m[GAP_TRIGGER_ASSET].get(dates[i+1])
-            pc = close_m[GAP_TRIGGER_ASSET].get(dates[i])
-            if op and pc and pc > 0 and op / pc - 1 <= -GAP_TRIGGER_PCT:
-                gap_fire = True
-        # 冷却期内: 强制逆回购, 不重新进场
-        if i < cooldown_until:
+
+        if r1 or r2 or r3:
             cost = THEO_FEE_ETF if cur is not None and cur != 'REPO' else 0
             equity *= (1 + THEO_FEE_REPO - cost); cur = 'REPO'
             continue
-        if r1 or r2 or r3 or gap_fire:
-            cost = THEO_FEE_ETF if cur is not None and cur != 'REPO' else 0
-            equity *= (1 + THEO_FEE_REPO - cost); cur = 'REPO'
-            if gap_fire:
-                cooldown_until = i + 3
         else:
             if cur != best:
                 cost = THEO_FEE_ETF if (cur is None or cur == 'REPO') else 2*THEO_FEE_ETF
