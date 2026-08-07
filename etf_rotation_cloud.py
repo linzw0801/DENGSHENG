@@ -632,19 +632,24 @@ def generate_html(data):
         <div style="font-size:12px;font-weight:700;color:#065f46;">💬 今日盘面</div>
         <div style="font-size:11px;color:#065f46;line-height:1.6;margin-top:4px;">{mkt}</div>
       </td></tr>'''
-        lines = [f"📰 新闻判断 (风险 {sev}/5, {news.get('news_count',0)} 条快讯)"]
-        if t3.get('hit'):
+        fail = 'GLM分析超时' in str(t3.get('reason', '')) or 'GLM调用失败' in str(t3.get('reason', ''))
+        lines = [f"📰 新闻判断 (风险 {sev}/5)"]
+        if fail:
+            lines.append(f"⚠️ {t3.get('reason','新闻分析不可用')}, 按纯量化执行")
+        elif t3.get('hit'):
             lines.append(f"🔴 三条件命中 → 建议考虑清仓! ({t3.get('reason','')})")
         elif rel:
-            lines.append(f"⚪ {t3.get('reason','未命中三条件')}")
+            lines.append(f"⚪ {t3.get('reason','未命中三条件, 不因新闻清仓')}")
         for n in rel[:3]:
-            lines.append(f"{'🔴'*n.get('severity',0)} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
-        if not rel and not t3.get('hit'):
+            sev_icon = news_sev_icon(n.get('severity', 0))
+            lines.append(f"{sev_icon} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
+        if not rel and not t3.get('hit') and not fail:
             lines.append("✅ 今日无重大风险新闻, 按信号操作")
+        # lines[0] 已是 "📰 新闻判断 (风险 X/5)", 不再加重复标题; 用 <br> 一行一个
         news_row += f'''
       <tr><td style="padding:12px 32px;background:#fffbeb;border-top:1px solid #e5e7eb;">
-        <div style="font-size:12px;font-weight:700;color:#92400e;">📰 新闻判断</div>
-        <div style="font-size:11px;color:#78350f;line-height:1.6;margin-top:4px;">{chr(10).join(lines)}</div>
+        <div style="font-size:12px;font-weight:700;color:#92400e;">{lines[0]}</div>
+        <div style="font-size:11px;color:#78350f;line-height:1.7;margin-top:4px;">{'<br>'.join(lines[1:])}</div>
       </td></tr>'''
     html = html.replace('%NEWS_ROW%', news_row)
 
@@ -989,20 +994,23 @@ def send_feishu(webhook_url, data, max_retries=3):
         sev = news.get('overall', {}).get('severity', 0)
         t3 = news.get('three_condition', {})
         rel = news.get('relevant_news', [])
+        fail = 'GLM分析超时' in str(t3.get('reason', '')) or 'GLM调用失败' in str(t3.get('reason', ''))
         lines = []
-        # 导师式盘面总结 (最显眼位置)
+        # 盘面总结 (简单客观)
         mkt = news.get('market_summary', '')
         if mkt and not mkt.startswith('('):
             lines.append(f"💬 **今日盘面**\n{mkt}")
-        lines.append(f"📰 **新闻判断** (风险 {sev}/5, 共 {news.get('news_count',0)} 条快讯)")
-        if t3.get('hit'):
+        lines.append(f"📰 **新闻判断** (风险 {sev}/5)")
+        if fail:
+            lines.append(f"⚠️ {t3.get('reason','新闻分析不可用')}, 按纯量化执行")
+        elif t3.get('hit'):
             lines.append(f"🔴 **三条件命中 → 建议考虑清仓!**  \n{t3.get('reason','')}")
         elif rel:
-            lines.append(f"⚪ {t3.get('reason','未命中三条件')}")
+            lines.append(f"⚪ {t3.get('reason','未命中三条件, 不因新闻清仓')}")
         for n in rel[:3]:
-            sev_icon = '🔴' * n.get('severity', 0)
+            sev_icon = news_sev_icon(n.get('severity', 0))
             lines.append(f"{sev_icon} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
-        if not rel and not t3.get('hit'):
+        if not rel and not t3.get('hit') and not fail:
             lines.append("✅ 今日无重大风险新闻, 按信号操作")
         news_md = '\n'.join(lines)
 
@@ -1298,6 +1306,17 @@ def calc_theoretical():
 # 新闻判断模块 (抓快讯 + GLM分析 + 三条件清仓规则)
 # 依赖: GLM_API_KEY 环境变量 (智谱免费API)
 # ============================================================
+
+def news_sev_icon(severity):
+    """严重度 → 颜色图标: 1-2低=🟢 3中=🟠 4-5高=🔴"""
+    s = int(severity or 0)
+    if s >= 4:
+        return '🔴'
+    if s == 3:
+        return '🟠'
+    return '🟢'
+
+
 NEWS_DIRECTIONS = {
     1: '杠杆/流动性收紧', 2: '利率预期反转', 3: '地缘冲突/战争',
     4: '单一资产泡沫破裂', 5: '政策突变/监管', 6: '疫情/黑天鹅',
@@ -1352,10 +1371,24 @@ def news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig):
         result['three_condition']['reason'] = '无新闻'
         return result
 
-    system = """你是ETF动量轮动策略的新闻风控助手。从财经快讯中识别【真正可能影响4个持仓标的】的重大新闻，输出JSON。
-【标的映射】黄金: 美联储/美元/美债/贵金属/地缘/通胀; 纳指: 美股/科技/AI/美联储/半导体; 创业板: A股/科技成长/新能源; 沪深300: A股大盘/宏观/政策。
-【6大方向】1=杠杆/流动性收紧 2=利率预期反转 3=地缘冲突 4=单一资产泡沫破裂 5=政策突变/监管 6=疫情/黑天鹅。
-【忽略】单只个股新闻、普通行业动态、与4标的无关琐事。
+    system = """你是ETF动量轮动策略的新闻分类助手。从财经快讯中识别可能影响4个持仓标的(黄金518880/纳指513100/创业板159915/沪深300 510300)的新闻，输出JSON。
+
+【方向判定(严格)】direction 表示"风险类型", 不是涨跌方向:
+- 1杠杆/流动性收紧: 去杠杆/查配资/收紧流动性/央行收紧
+- 2利率预期反转: 美联储加息/降息预期变化/美债收益率大幅波动
+- 3地缘冲突: 战争/制裁/冲突升级/地缘紧张
+- 4单一资产泡沫: 某资产涨幅过大/高位见顶/拥挤交易
+- 5政策突变/监管: 贸易战/关税/重大监管新政/宏观政策急转
+- 6疫情/黑天鹅: 疫情/封控/突发事件
+- null: 不属于上述风险类型
+
+【impact 判定(严格)】指该新闻对"受影响标的"的利多/利空:
+- 黄金上涨/央行增持黄金/金价突破 → 对黄金是利多
+- A股指数上涨/板块普涨 → 对沪深300/创业板是利多
+- 不加"利多/利空"的, 用"中性"
+
+【忽略】单只个股新闻(某公司业绩/上市/涨价)、普通行业动态、与4标的无关的琐事。
+
 只输出JSON: {"relevant_news":[{"text":"30字内","direction":1-6或null,"direction_name":"","impact":"利多/利空/中性","target":"受影响标的","severity":1-5}],"overall":{"direction":"主要风险方向","severity":1-5,"summary":"一句话","advice":"建议"}}"""
     user = (f"当前持仓:{hold_name} 风控:{'触发' if risk_trig else '未触发'} 持仓vol20:{hold_vol*100:.0f}%\n"
             f"今日快讯:\n{news_text}\n请分析,只输出JSON。")
@@ -1365,13 +1398,24 @@ def news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig):
                               'temperature': 0.2, 'max_tokens': 1200}).encode()
         req = urllib.request.Request('https://open.bigmodel.cn/api/paas/v4/chat/completions',
                                      data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
-        r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))
-        content = r.get('choices', [{}])[0].get('message', {}).get('content', '')
-        m = re.search(r'\{.*\}', content, re.DOTALL)
-        if m:
-            parsed = json.loads(m.group(0))
+        parsed = None
+        for _try in range(3):
+            try:
+                r = json.loads(urllib.request.urlopen(req, timeout=45).read().decode('utf-8'))
+                content = r.get('choices', [{}])[0].get('message', {}).get('content', '')
+                m = re.search(r'\{.*\}', content, re.DOTALL)
+                if m:
+                    parsed = json.loads(m.group(0))
+                    break
+            except Exception:
+                if _try < 2:
+                    time.sleep(3)
+        if parsed:
             result['relevant_news'] = parsed.get('relevant_news', [])
             result['overall'] = parsed.get('overall', result['overall'])
+        else:
+            result['three_condition']['reason'] = 'GLM分析超时/失败(已重试3次), 新闻判断不可用, 按纯量化执行'
+            return result
     except Exception as e:
         result['three_condition']['reason'] = f'GLM调用失败: {str(e)[:60]}'
         return result
@@ -1402,7 +1446,7 @@ def news_glm_analyze(news_text, hold_name, hold_code, hold_vol, risk_trig):
 
 
 def news_market_summary(data):
-    """用 GLM 生成今日盘面总结 (基于 4 标的当日涨跌 + 动量排名 + 均vol)"""
+    """用 GLM 简单总结今日盘面 (客观简短, 不心灵按摩)"""
     key = os.environ.get('GLM_API_KEY', '')
     if not key:
         return ''
@@ -1411,58 +1455,31 @@ def news_market_summary(data):
         valid = [r for r in results if r.get('valid')]
         if not valid:
             return ''
-        # 按动量排序的标的涨跌
         ranked = sorted(valid, key=lambda r: r['score'], reverse=True)
         lines = []
         for i, r in enumerate(ranked):
             chg = r.get('chg_pct')
             chg_s = f"{chg:+.1f}%" if chg is not None else "?"
-            lines.append(f"{i+1}.{r['name']} 涨跌{chg_s} 动量{r['score']:+.3f} vol{r['vol']*100:.0f}%")
+            lines.append(f"{i+1}.{r['name']} {chg_s} 动量{r['score']:+.3f}")
         market_info = '; '.join(lines)
         avg_v = data.get('avg_vol')
         risk = ', '.join(data.get('triggered', [])) or '无'
-        # 当前持仓信息 (策略信号标的 = 应持有的)
         best = data.get('best', {})
-        hold_name = best.get('name', '未知')
-        hold_code = best.get('code', '')
-        hold_rank = next((i+1 for i, r in enumerate(ranked) if r.get('code') == hold_code), None)
-        hold_chg = best.get('chg_pct')
-        hold_txt = hold_name + ('(动量排名第' + str(hold_rank) + '名' if hold_rank else '')
-        if hold_chg is not None:
-            hold_txt += ', 今日涨跌' + ('%+.1f%%' % hold_chg)
-        hold_txt += ')'
-        if data.get('triggered'):
-            hold_txt += '【风控已触发, 应按策略清仓】'
-        # 今日日期作为随机种子, 让每天鼓励话术不同
-        today_str = datetime.now(CN_TZ).strftime("%Y-%m-%d")
-        seed = sum(ord(c) for c in today_str)
-        # 3 种导师风格, 每天按日期切换 (seed % 3), 措辞由 GLM 即兴生成
-        mentor_styles = [
-            "像一位沉稳的教练: 先客观点评盘面, 再用一句话鼓励坚持纪律, 强调'信号至上、不因一时涨跌动摇'",
-            "像一位温暖的导师: 先总结今日盘面, 再温柔提醒'策略陪了你12年, 纪律是最大的护城河', 鼓励执行",
-            "像一位睿智的老朋友: 先聊今日盘面, 再坚定鼓励'你不需要预测, 只需要执行', 强调长期主义",
-        ]
-        mentor_style = mentor_styles[seed % 3]
-        system_mentor = (
-            "你是用户的量化交易人生导师。你的任务: 结合今日盘面数据, "
-            "既客观总结市场特征, 又以人生导师的口吻鼓励用户坚持ETF动量轮动策略的执行纪律。"
-            "要求: ①盘面总结2句话(谁强谁弱/情绪) ②鼓励1-2句话, 措辞温暖有力不油腻 ③总字数60-100字 \n"
-            "④不预测明天走势 ⑤鼓励话术必须同时贴合当天盘面与当前持仓(如'你今天持有黄金, 黄金今天领涨, 说明动量策略跟对了'之类), 不要每句都一样"
-        )
-        prompt = (f"今日({today_str})盘面数据: 排名及表现 {market_info}; "
-                  f"等权均vol {(avg_v*100 if avg_v else 0):.0f}%; 风控触发 {risk}; "
-                  f"当前持仓/应持有: {hold_txt}\n"
-                  f"请以「{mentor_style}」的口吻输出, 鼓励话术必须结合当前持仓的表现。")
+        hold_name = best.get('name', '')
+        prompt = (f"用2-3句话客观总结今日A股盘面: 4只ETF谁强谁弱、市场情绪如何。"
+                  f"不要预测、不要鼓励、不要心灵鸡汤, 只陈述事实。\n"
+                  f"动量排名: {market_info}; 等权均vol {(avg_v*100 if avg_v else 0):.0f}%; "
+                  f"风控触发: {risk}; 策略信号持仓: {hold_name}")
         payload = json.dumps({'model': 'glm-4-flash',
-                              'messages': [{'role': 'system', 'content': system_mentor},
-                                           {'role': 'user', 'content': prompt}],
-                              'temperature': 0.9, 'max_tokens': 300}).encode()
+                              'messages': [{'role': 'user', 'content': prompt}],
+                              'temperature': 0.2, 'max_tokens': 150}).encode()
         req = urllib.request.Request('https://open.bigmodel.cn/api/paas/v4/chat/completions',
                                      data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
         r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))
         return r.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
     except Exception as e:
-        return f'(盘面总结生成失败: {str(e)[:40]})'
+        return f'(盘面总结失败: {str(e)[:40]})'
+
 
 
 def run_news_analysis(data):
