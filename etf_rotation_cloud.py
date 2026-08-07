@@ -1408,6 +1408,18 @@ def news_market_summary(data):
         market_info = '; '.join(lines)
         avg_v = data.get('avg_vol')
         risk = ', '.join(data.get('triggered', [])) or '无'
+        # 当前持仓信息 (策略信号标的 = 应持有的)
+        best = data.get('best', {})
+        hold_name = best.get('name', '未知')
+        hold_code = best.get('code', '')
+        hold_rank = next((i+1 for i, r in enumerate(ranked) if r.get('code') == hold_code), None)
+        hold_chg = best.get('chg_pct')
+        hold_txt = hold_name + ('(动量排名第' + str(hold_rank) + '名' if hold_rank else '')
+        if hold_chg is not None:
+            hold_txt += ', 今日涨跌' + ('%+.1f%%' % hold_chg)
+        hold_txt += ')'
+        if data.get('triggered'):
+            hold_txt += '【风控已触发, 应按策略清仓】'
         # 今日日期作为随机种子, 让每天鼓励话术不同
         today_str = datetime.now(CN_TZ).strftime("%Y-%m-%d")
         seed = sum(ord(c) for c in today_str)
@@ -1422,11 +1434,12 @@ def news_market_summary(data):
             "你是用户的量化交易人生导师。你的任务: 结合今日盘面数据, "
             "既客观总结市场特征, 又以人生导师的口吻鼓励用户坚持ETF动量轮动策略的执行纪律。"
             "要求: ①盘面总结2句话(谁强谁弱/情绪) ②鼓励1-2句话, 措辞温暖有力不油腻 ③总字数60-100字 \n"
-            "④不预测明天走势 ⑤鼓励话术必须贴合当天盘面(比如黄金领涨就夸'跟对了趋势'之类), 不要每句都一样"
+            "④不预测明天走势 ⑤鼓励话术必须同时贴合当天盘面与当前持仓(如'你今天持有黄金, 黄金今天领涨, 说明动量策略跟对了'之类), 不要每句都一样"
         )
         prompt = (f"今日({today_str})盘面数据: 排名及表现 {market_info}; "
-                  f"等权均vol {(avg_v*100 if avg_v else 0):.0f}%; 风控触发 {risk}\n"
-                  f"请以「{mentor_style}」的口吻输出。")
+                  f"等权均vol {(avg_v*100 if avg_v else 0):.0f}%; 风控触发 {risk}; "
+                  f"当前持仓/应持有: {hold_txt}\n"
+                  f"请以「{mentor_style}」的口吻输出, 鼓励话术必须结合当前持仓的表现。")
         payload = json.dumps({'model': 'glm-4-flash',
                               'messages': [{'role': 'system', 'content': system_mentor},
                                            {'role': 'user', 'content': prompt}],
