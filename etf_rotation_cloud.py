@@ -720,7 +720,7 @@ def generate_charts(data):
     MOBILE_TICK = 8    # 坐标轴刻度字号
     
     # ----- 图1: 动量得分 & vol20 趋势（近60日） -----
-    fig, axes = plt.subplots(2, 1, figsize=(8, 4.8), gridspec_kw={'height_ratios': [2, 1]})
+    fig, axes = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
 
     n_days = min(60, len(all_dates))
     plot_dates = all_dates[-n_days:]
@@ -789,11 +789,11 @@ def generate_charts(data):
     ax.set_xticks(x_idx[::tick_step])
     ax.set_xticklabels([plot_dates[i][5:] for i in range(0, len(plot_dates), tick_step)], fontsize=MOBILE_TICK, rotation=20)
     plt.tight_layout(pad=2.0)
-    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=110, bbox_inches='tight'); plt.close()
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=120, bbox_inches='tight'); plt.close()
     chart_trend = base64.b64encode(buf.getvalue()).decode()
 
     # ----- 图2: 各ETF近30日涨跌幅（每日涨跌幅+累计曲线）-----
-    fig, axes = plt.subplots(2, 2, figsize=(8, 5.3))
+    fig, axes = plt.subplots(2, 2, figsize=(12, 7))
     for idx, code in enumerate(codes):
         if code not in raw_data: continue
         ax = axes[idx//2][idx%2]
@@ -832,7 +832,7 @@ def generate_charts(data):
         ax.set_xticklabels([plot_labels[i+1] for i in range(0, len(daily_pct), tick_step)],
                           fontsize=MOBILE_TICK, rotation=20)
     plt.tight_layout(pad=1.5)
-    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=110); plt.close()
+    buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=120); plt.close()
     chart_mini = base64.b64encode(buf.getvalue()).decode()
 
     print("[图表] 两张图表生成完成")
@@ -849,13 +849,13 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
         chart_section += f'''
       <tr><td style="padding:18px 32px 12px 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📈 动量得分</div>
-        <img src="data:image/png;base64,{chart_trend_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
+        <img src="data:image/png;base64,{chart_trend_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
       </td></tr>'''
     if chart_mini_b64:
         chart_section += f'''
       <tr><td style="padding:0 32px 14px 32px;">
         <div style="font-size:15px;font-weight:700;color:#111827;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e5e7eb;">📊 ETF走势</div>
-        <img src="data:image/png;base64,{chart_mini_b64}" style="width:100% !important;height:auto !important;max-width:100% !important;border-radius:6px;display:block;">
+        <img src="data:image/png;base64,{chart_mini_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
       </td></tr>'''
 
     # 在理论账户占位符前插入图表 (原指向历史业绩段落, 已删除; 改为固定锚点)
