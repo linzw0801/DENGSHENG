@@ -304,6 +304,16 @@ def run():
     if not valid_results:
         return None
 
+    # 数据一致性校验: 所有有效标的必须是最新交易日
+    # (防止 4 标的日期不同步导致动量算错, 如黄金是08-07但纳指还是08-06)
+    dates_set = set(r.get("date", "")[:10] for r in valid_results)
+    if len(dates_set) > 1:
+        newest = max(dates_set)
+        lagging = [r["code"] for r in valid_results if r.get("date", "")[:10] != newest]
+        print(f"[数据一致性] 4标的数据日期不一致: {dates_set}")
+        print(f"[数据一致性] 滞后标的: {lagging} (最新为 {newest}), 返回 None 触发重试")
+        return None
+
     valid_results.sort(key=lambda r: r["score"], reverse=True)
     best = valid_results[0]
     avg_vol = sum(r["vol"] for r in valid_results) / len(valid_results)
