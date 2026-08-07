@@ -558,6 +558,7 @@ def generate_html(data):
 
       %THEO_ROW%
       %NEWS_ROW%
+      %CHART_ROW%
 
     </table>
     <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;">
@@ -858,10 +859,10 @@ def inject_charts_into_html(html_content, chart_trend_b64, chart_mini_b64):
         <img src="data:image/png;base64,{chart_mini_b64}" style="width:100%;max-width:536px;height:auto;border-radius:8px;display:block;">
       </td></tr>'''
 
-    # 在理论账户占位符前插入图表 (原指向历史业绩段落, 已删除; 改为固定锚点)
-    insert_marker = '%NEWS_ROW%'
+    # 在 %CHART_ROW% 占位符处插入图表 (在主table内, 新闻判断后, 与其他模块并列居中)
+    insert_marker = '%CHART_ROW%'
     if insert_marker in html_content:
-        return html_content.replace(insert_marker, chart_section + insert_marker, 1)
+        return html_content.replace(insert_marker, chart_section, 1)
     else:
         return html_content.replace('</body>', chart_section + '</body>', 1)
 
