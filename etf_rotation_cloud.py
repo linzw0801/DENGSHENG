@@ -1406,13 +1406,14 @@ def news_market_summary(data):
         risk = ', '.join(data.get('triggered', [])) or '无'
         best = data.get('best', {})
         hold_name = best.get('name', '')
-        prompt = (f"用2-3句话客观总结今日A股盘面: 4只ETF谁强谁弱、市场情绪如何。"
+        prompt = (f"用2-3句话客观总结今日A股盘面: 4只ETF(黄金/纳指/沪深300/创业板)谁强谁弱、市场情绪如何。"
+                  f"要求: 必须提到全部4只ETF(黄金/纳指/沪深300/创业板)各自的涨跌, 不要遗漏任何一只。"
                   f"不要预测、不要鼓励、不要心灵鸡汤, 只陈述事实。\n"
                   f"动量排名: {market_info}; 等权均vol {(avg_v*100 if avg_v else 0):.0f}%; "
                   f"风控触发: {risk}; 策略信号持仓: {hold_name}")
         payload = json.dumps({'model': 'glm-4-flash',
                               'messages': [{'role': 'user', 'content': prompt}],
-                              'temperature': 0.2, 'max_tokens': 150}).encode()
+                              'temperature': 0.2, 'max_tokens': 200}).encode()
         req = urllib.request.Request('https://open.bigmodel.cn/api/paas/v4/chat/completions',
                                      data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
         r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))
