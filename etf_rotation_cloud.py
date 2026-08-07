@@ -624,6 +624,14 @@ def generate_html(data):
         sev = news.get('overall', {}).get('severity', 0)
         t3 = news.get('three_condition', {})
         rel = news.get('relevant_news', [])
+        # 盘面总结 (导师式)
+        mkt = news.get('market_summary', '')
+        if mkt and not mkt.startswith('('):
+            news_row += f'''
+      <tr><td style="padding:12px 32px;background:#f0fdf4;border-top:1px solid #e5e7eb;">
+        <div style="font-size:12px;font-weight:700;color:#065f46;">💬 今日盘面</div>
+        <div style="font-size:11px;color:#065f46;line-height:1.6;margin-top:4px;">{mkt}</div>
+      </td></tr>'''
         lines = [f"📰 新闻判断 (风险 {sev}/5, {news.get('news_count',0)} 条快讯)"]
         if t3.get('hit'):
             lines.append(f"🔴 三条件命中 → 建议考虑清仓! ({t3.get('reason','')})")
@@ -633,7 +641,7 @@ def generate_html(data):
             lines.append(f"{'🔴'*n.get('severity',0)} [{n.get('direction_name','?')}/{n.get('impact','')}] {n.get('text','')[:36]}")
         if not rel and not t3.get('hit'):
             lines.append("✅ 今日无重大风险新闻, 按信号操作")
-        news_row = f'''
+        news_row += f'''
       <tr><td style="padding:12px 32px;background:#fffbeb;border-top:1px solid #e5e7eb;">
         <div style="font-size:12px;font-weight:700;color:#92400e;">📰 新闻判断</div>
         <div style="font-size:11px;color:#78350f;line-height:1.6;margin-top:4px;">{chr(10).join(lines)}</div>
@@ -981,7 +989,12 @@ def send_feishu(webhook_url, data, max_retries=3):
         sev = news.get('overall', {}).get('severity', 0)
         t3 = news.get('three_condition', {})
         rel = news.get('relevant_news', [])
-        lines = [f"📰 **新闻判断** (风险 {sev}/5, 共 {news.get('news_count',0)} 条快讯)"]
+        lines = []
+        # 导师式盘面总结 (最显眼位置)
+        mkt = news.get('market_summary', '')
+        if mkt and not mkt.startswith('('):
+            lines.append(f"💬 **今日盘面**\n{mkt}")
+        lines.append(f"📰 **新闻判断** (风险 {sev}/5, 共 {news.get('news_count',0)} 条快讯)")
         if t3.get('hit'):
             lines.append(f"🔴 **三条件命中 → 建议考虑清仓!**  \n{t3.get('reason','')}")
         elif rel:
