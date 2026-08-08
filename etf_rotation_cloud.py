@@ -574,11 +574,22 @@ def generate_html(data):
     theo_row = ""
     theo = data.get('theoretical')
     if theo:
+        # 次日操作指令 (醒目大条)
+        act_level = theo.get('nav_action_level', 'normal')
+        act_text = theo.get('nav_action', '')
+        if act_level == 'stop':
+            act_bg, act_color = '#fee2e2', '#b91c1c'
+        elif act_level == 'recover':
+            act_bg, act_color = '#dcfce7', '#15803d'
+        else:
+            act_bg, act_color = '#eff6ff', '#1d4ed8'
+        nav_action_note = f'''
+        <div style="font-size:14px;font-weight:800;color:{act_color};background:{act_bg};border-radius:6px;padding:6px 10px;margin:6px 0;">{act_text}</div>'''
         # 净值止损状态行
         nav_stop_note = ""
         if theo.get('nav_stop_on'):
             nav_stop_note = f'''
-        <div style="font-size:12px;font-weight:800;color:#b91c1c;background:#fee2e2;border-radius:4px;padding:4px 8px;margin:4px 0;">⚠️ 净值止损中: 理论净值从高点回撤 {theo.get('nav_dd',0)*100:.1f}% 已清仓, 等待净值站上MA30恢复</div>'''
+        <div style="font-size:11px;color:#6b7280;">净值止损中: 从高点回撤 {theo.get('nav_dd',0)*100:.1f}% · 等待净值站上MA30</div>'''
         else:
             nav_stop_note = f'''
         <div style="font-size:11px;color:#6b7280;">净值回撤(相对高点): <b style="color:{'#b91c1c' if theo.get('nav_dd',0) < -0.10 else '#047857'};">{theo.get('nav_dd',0)*100:+.1f}%</b> · 止损阈值15% · 历史高点 {theo.get('nav_peak',0):,.0f} 元</div>'''
@@ -586,7 +597,7 @@ def generate_html(data):
       <tr><td style="padding:12px 32px;background:#f0fdf4;border-top:1px solid #e5e7eb;">
         <div style="font-size:12px;font-weight:700;color:#065f46;">💰 理论账户</div>
         <div style="font-size:18px;font-weight:700;color:#047857;margin:4px 0;">{theo['equity']:,.0f} 元 <span style="font-size:13px;color:#059669;">({theo['total_ret']*100:+.2f}%)</span></div>
-        <div style="font-size:11px;color:#6b7280;">当前持仓: {theo['hold']} · 数据至 {theo['last_date']} · 按你的费率(万0.5免5+逆回购1折)</div>{nav_stop_note}
+        <div style="font-size:11px;color:#6b7280;">当前持仓: {theo['hold']} · 数据至 {theo['last_date']} · 按你的费率(万0.5免5+逆回购1折)</div>{nav_action_note}{nav_stop_note}
       </td></tr>'''
     html = html.replace('%THEO_ROW%', theo_row)
     news_row = ""
@@ -942,14 +953,22 @@ def send_feishu(webhook_url, data, max_retries=3):
     theo = data.get('theoretical')
     theo_md = ''
     if theo:
+        act = theo.get('nav_action', '')
+        act_level = theo.get('nav_action_level', 'normal')
+        if act_level == 'stop':
+            act_line = f"⛔ **{act}**  \n"
+        elif act_level == 'recover':
+            act_line = f"✅ **{act}**  \n"
+        else:
+            act_line = f"{act}  \n"
         nav_stop_line = ''
         if theo.get('nav_stop_on'):
-            nav_stop_line = f"⚠️ **净值止损中** (回撤{theo.get('nav_dd',0)*100:.1f}%已清仓, 等净值站上MA30恢复)\n"
+            nav_stop_line = f"净值回撤 {theo.get('nav_dd',0)*100:+.1f}% (阈值15%, 止损中)\n"
         else:
             nav_stop_line = f"净值回撤 {theo.get('nav_dd',0)*100:+.1f}% (阈值15%)\n"
         theo_md = (f"**💰 理论账户**  \n"
                    f"当前 **{theo['equity']:,.0f} 元** ({theo['total_ret']*100:+.2f}%) 持仓 {theo['hold']}\n"
-                   f"{nav_stop_line}")
+                   f"{act_line}{nav_stop_line}")
 
     # 新闻判断
     news = data.get('news')
@@ -1225,6 +1244,7 @@ def theo_calc_from_data(ohlc):
                 in_cool = True
                 stop_events.append(('止损', dates[i], equity/peak - 1))
                 cur = 'REPO'
+                peak = equity   # 关键修复: 止损后重置峰值, 避免空仓期净值走平但peak不动导致的死循环
                 risk_off = True  # 强制空仓
 
         # 冷静期恢复检查: 净值站上自身MA30
@@ -1257,10 +1277,27 @@ def theo_calc_from_data(ohlc):
     hold_name = {'510300': '沪深300', '159915': '创业板', '513100': '纳指', '518880': '黄金'}.get(cur, '逆回购' if cur == 'REPO' else '空仓')
     # 当前净值回撤 (相对历史高点)
     cur_dd = equity/peak - 1 if peak > 0 else 0
+    # 生成次日操作指令 (策略收盘后跑, 用户次日开盘执行)
+    _names = {'510300': '沪深300', '159915': '创业板', '513100': '纳指', '518880': '黄金'}
+    last_ev = stop_events[-1] if stop_events else None
+    last_sim_date = dates[n-2] if n >= 2 else dates[-1]  # 模拟最后处理日
+    if in_cool:
+        # 冷静期: 已清仓, 等待净值站上MA30
+        nav_action = "⛔ 清仓观望: 净值已回撤超15%, 等待净值站上MA30再进场"
+        nav_action_level = 'stop'
+    elif last_ev and last_ev[0] == '恢复' and last_ev[1] == last_sim_date:
+        # 今天刚恢复: 次日开盘进场
+        nav_action = f"✅ 次日开盘进场: 买入 {_names.get(cur, hold_name)} (净值已站上MA30)"
+        nav_action_level = 'recover'
+    else:
+        # 正常持有
+        nav_action = f"➡️ 继续持有 {hold_name}" if cur not in (None, 'REPO') else "➡️ 空仓等待信号"
+        nav_action_level = 'normal'
     return {'start': THEO_START, 'capital': THEO_CAPITAL, 'equity': equity,
             'total_ret': total_ret, 'ann': ann, 'n_days': n_days,
             'last_date': dates[-1], 'hold': hold_name,
             'nav_peak': peak, 'nav_dd': cur_dd, 'nav_stop_on': in_cool,
+            'nav_action': nav_action, 'nav_action_level': nav_action_level,
             'nav_stop_events': stop_events, 'nav_hist': equity_hist}
 
 
@@ -1571,13 +1608,14 @@ def main():
     print()
     output = format_action(data)
     print(output)
-    # 理论账户 (无状态全量重算, 云端安全)
-    theo = calc_theoretical()
-    if theo:
-        theo_line = (f"💰 理论账户 (7/7进场5万): {theo['equity']:,.0f}元 "
-                     f"({theo['total_ret']*100:+.2f}%) 持仓{theo['hold']}")
-        print(theo_line)
-        data['theoretical'] = theo
+    # 理论账户 (无状态全量重算, 云端安全)
+    theo = calc_theoretical()
+    if theo:
+        theo_line = (f"💰 理论账户 (8/1进场5万): {theo['equity']:,.0f}元 "
+                     f"({theo['total_ret']*100:+.2f}%) 持仓{theo['hold']} "
+                     f"| {theo.get('nav_action','')}")
+        print(theo_line)
+        data['theoretical'] = theo
 
     # 新闻判断 (GLM 分析 + 三条件)
     print("\n--- 新闻判断 ---")
